@@ -19,6 +19,14 @@ This project is for the owner's education. The owner builds the application; age
 - Verify what the applicable specification and project-supported version actually guarantee. Do not present provider defaults as specification guarantees; standard UUID generation, for example, does not guarantee UUIDv7.
 - If a requested feature cannot be expressed through the standard API, explain the limitation and the portability tradeoff before proposing an extension. Do not silently substitute provider-specific behavior. Where no applicable standard API exists, identify the framework-specific choice clearly.
 
+## Request validation and domain responsibilities
+
+- Distinguish validation of submitted input from enforcement of domain invariants. Do not assign every rule involving business concepts exclusively to the domain.
+- Put request validation in request DTOs using Jakarta Validation, including rules involving multiple fields. For example, `UpdateTicketRequest` should validate that a blocked ticket request includes a nonblank reason and provide the user-facing validation message. Use a class-level constraint when appropriate; field annotations alone do not express conditional relationships between fields.
+- If the same rule is a domain invariant, the domain should also protect it for callers outside the HTTP endpoint. Explain why both boundaries need enforcement rather than treating request validation as sufficient protection for the domain.
+- Keep behavior that depends on existing entity state, such as status transitions and completion timestamps, in domain operations. Keep HTTP response handling and translation of domain failures at the API boundary; domain objects should not depend on request DTOs or HTTP exceptions.
+- When reviewing placement of a rule, explain separately what belongs in the request, what belongs in the domain, and what remains in the resource. Avoid categorical recommendations that overlook these distinct responsibilities.
+
 ## Repository conventions
 
 - Never commit unless the owner explicitly requests a commit in the current interaction.
