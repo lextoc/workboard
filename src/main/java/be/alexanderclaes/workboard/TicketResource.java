@@ -1,5 +1,6 @@
 package be.alexanderclaes.workboard;
 
+import jakarta.persistence.EntityManager;
 import jakarta.validation.constraints.NotNull;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
@@ -8,6 +9,7 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import java.time.Duration;
 import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
@@ -17,17 +19,29 @@ import java.util.UUID;
 @Consumes(MediaType.APPLICATION_JSON)
 public class TicketResource {
     @Inject
-    TicketRepository ticketRepository;
+    EntityManager entityManager;
 
     @GET
     public List<Ticket> getTickets() {
-        return ticketRepository.findAll();
+        Instant cutoff = Instant.now().minus(Duration.ofMinutes(5));
+
+        return entityManager.createQuery(
+                        """
+                            SELECT t FROM Ticket t
+                            WHERE t.status <> :done OR t.completedAt >= :cutoff
+                            ORDER BY t.id ASC
+                        """,
+                        Ticket.class
+                )
+                .setParameter("done", TicketStatus.DONE)
+                .setParameter("cutoff", cutoff)
+                .getResultList();
     }
 
     @GET
     @Path("/{id}")
     public Ticket getTicket(@PathParam("id") UUID id) {
-        Ticket ticket = ticketRepository.findById(id);
+        Ticket ticket = entityManager.find(Ticket.class, id);
 
         if (ticket == null) {
             throw new NotFoundException("Ticket not found.");
@@ -47,7 +61,7 @@ public class TicketResource {
         ticket.setBlockedNote(null);
         ticket.setCompletedAt(request.status() == TicketStatus.DONE ? Instant.now() : null);
 
-        ticketRepository.persist(ticket);
+        entityManager.persist(ticket);
 
         return Response.status(Response.Status.CREATED).entity(ticket).build();
     }
@@ -56,7 +70,7 @@ public class TicketResource {
     @PUT
     @Path("/{id}")
     public Ticket update(@PathParam("id") UUID id, @Valid @NotNull UpdateTicketRequest request) {
-        Ticket ticket = ticketRepository.findById(id);
+        Ticket ticket = entityManager.find(Ticket.class, id);
 
         if (ticket == null) {
             throw new NotFoundException("Ticket not found.");
@@ -94,12 +108,13 @@ public class TicketResource {
     @DELETE
     @Path("/{id}")
     public Response delete(@PathParam("id") UUID id) {
-        boolean deleted = ticketRepository.deleteById(id);
+        Ticket ticket = entityManager.find(Ticket.class, id);
 
-        if (!deleted) {
+        if (ticket == null) {
             throw new NotFoundException("Ticket not found.");
         }
 
+        entityManager.remove(ticket);
         return Response.noContent().build();
     }
 }
