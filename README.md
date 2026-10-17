@@ -111,3 +111,31 @@ java -jar target/quarkus-app/quarkus-run.jar
 ```
 
 Flyway runs migrations from `src/main/resources/db/migration` on production startup. Hibernate validates the resulting schema. The database user needs permission to apply migrations.
+
+The application does not implement its own authentication or authorization. The deployed site uses nginx HTTP Basic authentication over HTTPS to protect both the page and `/api/tickets`. The backend binds only to localhost, so public requests must pass through nginx. Running the application directly without that gateway does not provide authentication.
+
+The repository also includes a JVM Dockerfile at `src/main/docker/Dockerfile.jvm`. The current droplet deployment uses the packaged application directly with Java 21 and systemd.
+
+## Live deployment
+
+The production board is hosted at https://workboard.alexanderclaes.be on the existing droplet, reached administratively through `ssh root@alexanderclaes.be`. Deployment configuration is tracked in `deploy/`; passwords and database credentials are kept only on the server.
+
+| Component | Location or behavior |
+| --- | --- |
+| Application | `workboard.service`, running as the dedicated `workboard` system user with the `prod` profile |
+| Releases | `/opt/workboard/releases/`, selected by the `/opt/workboard/current` symlink |
+| Backend | `127.0.0.1:18083`, with an explicit hostname allowlist |
+| Database | Dedicated PostgreSQL `workboard` database and login role |
+| Database configuration | `/etc/workboard/workboard.env`, readable only by root and loaded by systemd |
+| Public gateway | `/etc/nginx/sites-available/workboard.alexanderclaes.be` |
+| HTTP login | User `alexander`; password hash stored in `/etc/workboard/htpasswd` |
+| HTTPS | Let's Encrypt certificate with automatic renewal and an nginx reload hook; HTTP redirects to HTTPS |
+| Backups | `workboard-backup.timer` runs daily around 03:20 UTC, retaining roughly 14 days of PostgreSQL dumps under `/var/backups/workboard` |
+
+Backups are stored on the same droplet. They do not protect against losing the droplet or its disk; off-server backup storage is not configured.
+
+For a new release, build with `./mvnw package -DargLine=`, upload the entire `target/quarkus-app/` directory into a new release directory, switch the `current` symlink, and restart `workboard.service`. Keep the previous release for rollback. Flyway runs on each startup; rolling back application files does not reverse database migrations.
+
+Inspect application logs with `journalctl -u workboard.service` and trigger a backup with `systemctl start workboard-backup.service`. The backup job checks that each dump has a readable archive directory; a full restore drill has not been performed.
+
+Deployment verification on 2026-10-17: all 14 API tests passed during packaging. Live HTTPS checks confirmed anonymous requests are rejected for the frontend, assets, and API methods; authenticated assets match the workspace; ticket creation, updates, blocking, completion, and deletion work against PostgreSQL; and a temporary ticket survived a service restart before being removed. HTTP redirects to HTTPS, the backend port is not publicly reachable, and a database dump completed successfully. Development H2 data was not migrated. Browser rendering and interaction checks were not performed as part of deployment.

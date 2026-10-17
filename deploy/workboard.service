@@ -1,0 +1,30 @@
+[Unit]
+Description=Workboard production
+After=network.target postgresql.service
+Requires=postgresql.service
+
+[Service]
+Type=simple
+User=workboard
+Group=workboard
+StateDirectory=workboard
+WorkingDirectory=/var/lib/workboard
+EnvironmentFile=/etc/workboard/workboard.env
+Environment=QUARKUS_PROFILE=prod
+Environment=QUARKUS_HTTP_HOST=127.0.0.1
+Environment=QUARKUS_HTTP_PORT=18083
+Environment=QUARKUS_HTTP_HOST_VALIDATION_ALLOWED_HOSTS=workboard.alexanderclaes.be,localhost,127.0.0.1
+Environment=QUARKUS_DATASOURCE_JDBC_MAX_SIZE=4
+ExecStart=/usr/bin/java -Xms32m -Xmx160m -XX:MaxMetaspaceSize=128m -jar /opt/workboard/current/quarkus-run.jar
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=30
+MemoryMax=384M
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

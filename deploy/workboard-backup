@@ -1,0 +1,14 @@
+#!/bin/sh
+set -eu
+umask 077
+
+backup_dir=/var/backups/workboard
+mkdir -p "$backup_dir"
+chmod 700 "$backup_dir"
+backup_file="$backup_dir/workboard-$(date -u +%Y%m%dT%H%M%SZ).dump"
+partial_file="$backup_file.partial"
+trap 'rm -f "$partial_file"' EXIT HUP INT TERM
+runuser -u postgres -- pg_dump --format=custom workboard > "$partial_file"
+pg_restore --list "$partial_file" > /dev/null
+mv "$partial_file" "$backup_file"
+find "$backup_dir" -type f -name 'workboard-*.dump' -mtime +14 -delete
