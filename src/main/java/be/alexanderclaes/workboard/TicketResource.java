@@ -8,6 +8,7 @@ import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
 
+import java.time.Instant;
 import java.util.List;
 import java.util.UUID;
 
@@ -44,6 +45,7 @@ public class TicketResource {
         ticket.setStatus(request.status());
         ticket.setBlocked(false);
         ticket.setBlockedNote(null);
+        ticket.setCompletedAt(request.status() == TicketStatus.DONE ? Instant.now() : null);
 
         ticketRepository.persist(ticket);
 
@@ -60,7 +62,7 @@ public class TicketResource {
             throw new NotFoundException("Ticket not found.");
         }
 
-        if ((ticket.isBlocked() || request.blocked()) && request.status() == TicketStatus.DONE) {
+        if (request.blocked() && request.status() == TicketStatus.DONE) {
             throw new BadRequestException(
                     "Unblock this ticket before moving it to DONE.");
         }
@@ -74,6 +76,12 @@ public class TicketResource {
         ticket.setStatus(request.status());
         ticket.setBlocked(request.blocked());
         ticket.setBlockedNote(request.blocked() ? request.blockedNote() : null);
+
+        if (request.status() == TicketStatus.DONE && ticket.getStatus() != TicketStatus.DONE) {
+            ticket.setCompletedAt(Instant.now());
+        } else {
+            ticket.setCompletedAt(null);
+        }
 
         return ticket;
     }

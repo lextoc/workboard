@@ -4,7 +4,7 @@ CREATE TABLE ticket (
     status VARCHAR(255) NOT NULL,
     blocked BOOLEAN NOT NULL,
     blockedNote VARCHAR(1000),
-    completedAt date,
+    completedAt TIMESTAMP WITH TIME ZONE,
 
     CONSTRAINT ticket_pkey PRIMARY KEY (id),
     CONSTRAINT ticket_status_check
