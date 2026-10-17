@@ -9,6 +9,7 @@ A learning project for a ticket board with TODO, DOING, and DONE columns. The ow
 - Add tickets with an explicit Add button or Enter. The actions panel contains a shortened UUID reference; the full identifier is retained in API requests and available in the reference tooltip.
 - Submit blocking requests, record or edit a blocking reason, and unblock tickets.
 - Refresh the board manually to load the current server state.
+- Light and dark themes follow the system appearance automatically through CSS, including changes while the page is open; there is no theme toggle or saved override.
 - Persist tickets through a JSON REST API, with UUID identifiers.
 
 Blocking is a separate flag, not a column. The API rejects blocked tickets in DONE. Unblocking clears the stored reason.
