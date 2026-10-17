@@ -5,7 +5,7 @@ import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotBlank;
 
 public record CreateTicketRequest(
-        @NotBlank @Size(max = 200) String title,
+        @NotNull TicketTitle title,
         @NotNull TicketStatus status
 ) {
 }
