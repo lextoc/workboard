@@ -23,8 +23,11 @@
             <div class="cards"></div>
             <form class="create-form" aria-label="Add a TODO ticket">
                 <label class="sr-only" for="todo-title">New TODO ticket title</label>
-                <input id="todo-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="todo-create-hint todo-create-error">
-                <p id="todo-create-hint" class="hint">Enter to add to TODO</p>
+                <div class="create-controls">
+                    <input id="todo-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="todo-create-hint todo-create-error">
+                    <button type="submit" class="secondary" aria-label="Add a TODO ticket"><span>Add</span></button>
+                </div>
+                <p id="todo-create-hint" class="hint">Add or press Enter · TODO</p>
                 <p id="todo-create-error" class="create-error" role="alert" hidden></p>
             </form>
         </section>
@@ -33,8 +36,11 @@
             <div class="cards"></div>
             <form class="create-form" aria-label="Add a DOING ticket">
                 <label class="sr-only" for="doing-title">New DOING ticket title</label>
-                <input id="doing-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="doing-create-hint doing-create-error">
-                <p id="doing-create-hint" class="hint">Enter to add to DOING</p>
+                <div class="create-controls">
+                    <input id="doing-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="doing-create-hint doing-create-error">
+                    <button type="submit" class="secondary" aria-label="Add a DOING ticket"><span>Add</span></button>
+                </div>
+                <p id="doing-create-hint" class="hint">Add or press Enter · DOING</p>
                 <p id="doing-create-error" class="create-error" role="alert" hidden></p>
             </form>
         </section>
@@ -43,13 +49,16 @@
             <div class="cards"></div>
             <form class="create-form" aria-label="Add a DONE ticket">
                 <label class="sr-only" for="done-title">New DONE ticket title</label>
-                <input id="done-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="done-create-hint done-create-error">
-                <p id="done-create-hint" class="hint">Enter to add to DONE</p>
+                <div class="create-controls">
+                    <input id="done-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="done-create-hint done-create-error">
+                    <button type="submit" class="secondary" aria-label="Add a DONE ticket"><span>Add</span></button>
+                </div>
+                <p id="done-create-hint" class="hint">Add or press Enter · DONE</p>
                 <p id="done-create-error" class="create-error" role="alert" hidden></p>
             </form>
         </section>
     </div>
-    <p class="hint">Click a title to edit. Enter saves; Esc cancels. Drag the grip to move a ticket, or focus it and use ← / →.</p>
+    <p class="hint">Click a title to edit. Enter adds a line; Ctrl/⌘ + Enter saves; Esc cancels. Hover over ⋯ briefly or click it for ticket actions, including moving and blocking.</p>
 </main>
 
 </body>

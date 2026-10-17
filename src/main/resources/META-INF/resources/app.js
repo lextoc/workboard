@@ -22,6 +22,38 @@ function button(text, className, label) {
     return node;
 }
 
+function icon(name) {
+    const paths = {
+        grip: 'M9 5h.01M15 5h.01M9 12h.01M15 12h.01M9 19h.01M15 19h.01',
+        block: 'M6 6l12 12M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0',
+        trash: 'M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6',
+        left: 'M19 12H5m6-6-6 6 6 6',
+        right: 'M5 12h14m-6-6 6 6-6 6',
+        plus: 'M12 5v14M5 12h14',
+        more: 'M5 12h.01M12 12h.01M19 12h.01'
+    };
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', paths[name]);
+    svg.append(path);
+    return svg;
+}
+
+function actionButton(text, iconName, className, label) {
+    const control = button('', className, label);
+    control.append(icon(iconName));
+    if (text) control.append(element('span', '', text));
+    return control;
+}
+
 function showFeedback(message, error = false) {
     feedback.textContent = message;
     feedback.classList.toggle('error', error);
@@ -98,13 +130,18 @@ function updateRefresh() {
 }
 
 function updateColumns() {
+    const emptyMessages = {
+        TODO: 'Ready for your next task',
+        DOING: 'Nothing in progress',
+        DONE: 'No completed tasks'
+    };
     for (const status of statuses) {
         const column = document.querySelector(`[data-status="${status}"]`);
         const cards = column.querySelector('.cards');
         const count = cards.querySelectorAll('.ticket').length;
         column.querySelector('.count').textContent = count;
         cards.querySelector('.empty')?.remove();
-        if (!count) cards.append(element('p', 'empty', 'No tickets yet.'));
+        if (!count) cards.append(element('p', 'empty', emptyMessages[status]));
     }
 }
 
@@ -131,7 +168,7 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
     if (refreshing || pendingTickets.has(id)) return;
     const card = cardFor(id);
     const focused = document.activeElement;
-    const controls = [...card.querySelectorAll('button, input, textarea, summary')];
+    const controls = [...card.querySelectorAll('button, input, textarea')];
     const disabled = controls.map(control => control.disabled);
     pendingTickets.add(id);
     updateRefresh();
@@ -139,7 +176,7 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
     card.setAttribute('aria-busy', 'true');
     controls.forEach(control => { control.disabled = true; });
     const message = card.querySelector('.ticket-feedback');
-    message.classList.remove('error');
+    message.classList.remove('error', 'sr-only');
     message.textContent = 'Saving…';
     let saved = false;
     try {
@@ -157,7 +194,10 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
         }
         if (document.activeElement === document.body || card.contains(document.activeElement)) {
             if (saved) cardFor(id)?.querySelector(focusTarget)?.focus();
-            else if (focused?.isConnected) focused.focus();
+            else if (focused?.isConnected) {
+                const target = focused.closest('[hidden]') ? card.querySelector('.ticket-menu-trigger') : focused;
+                target?.focus();
+            }
         }
     }
 }
@@ -178,6 +218,7 @@ async function saveTicket(id, changes) {
     editingTickets.delete(String(id));
     placeTicket(ticket);
     const message = cardFor(id).querySelector('.ticket-feedback');
+    message.classList.add('sr-only');
     message.textContent = 'Saved';
 }
 
@@ -196,7 +237,7 @@ function canMove(id, status) {
 
 function moveTicket(id, status) {
     if (!canMove(id, status)) return;
-    runCard(id, () => saveTicket(id, { status }), '.drag-handle');
+    runCard(id, () => saveTicket(id, { status }), '.ticket-menu-trigger');
 }
 
 function openInlineEditor(id, mode) {
@@ -205,22 +246,21 @@ function openInlineEditor(id, mode) {
     const card = cardFor(id);
     editingTickets.add(id);
     card.classList.add('editing');
-    card.querySelector('.ticket-menu').open = false;
-    card.querySelector('.ticket-menu').hidden = true;
+    closeTicketMenus();
     card.querySelectorAll('button').forEach(control => { control.disabled = true; });
     card.querySelector('.ticket-feedback').textContent = '';
     const original = card.querySelector(mode === 'title' ? '.ticket-heading' : '.blocker-section');
     original.hidden = true;
     const form = element('form', 'inline-editor');
-    const field = element(mode === 'title' ? 'input' : 'textarea');
+    const field = element('textarea');
     field.id = `edit-${mode}-${id}`;
     field.name = mode;
     field.value = mode === 'title' ? ticket.title : ticket.blockedNote ?? '';
+    field.rows = mode === 'title' ? 2 : 3;
     if (mode === 'title') field.autocomplete = 'off';
-    else field.rows = 3;
     const label = element('label', mode === 'title' ? 'sr-only' : '', mode === 'title' ? 'Ticket title' : 'What is blocking this ticket?');
     label.htmlFor = field.id;
-    const hint = element('p', 'hint', mode === 'title' ? 'Enter to save · Esc to cancel' : 'Ctrl/⌘ + Enter to save · Esc to cancel');
+    const hint = element('p', 'hint', 'Ctrl/⌘ + Enter to save · Esc to cancel');
     hint.id = `edit-help-${id}`;
     field.setAttribute('aria-describedby', hint.id);
     const actions = element('div', 'inline-actions');
@@ -230,7 +270,7 @@ function openInlineEditor(id, mode) {
     const cancelEdit = () => {
         if (pendingTickets.has(id)) return;
         editingTickets.delete(id);
-        placeTicket(savedTickets.get(id), mode === 'title' ? '.ticket-title' : '.blocker-summary, .ticket-menu summary');
+        placeTicket(savedTickets.get(id), mode === 'title' ? '.ticket-title' : '.ticket-menu-trigger');
     };
     cancel.addEventListener('click', cancelEdit);
     form.addEventListener('keydown', event => {
@@ -238,7 +278,7 @@ function openInlineEditor(id, mode) {
         if (event.key === 'Escape') {
             event.preventDefault();
             cancelEdit();
-        } else if (mode !== 'title' && event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+        } else if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
             event.preventDefault();
             form.requestSubmit();
         }
@@ -247,7 +287,7 @@ function openInlineEditor(id, mode) {
         event.preventDefault();
         const value = field.value;
         const changes = mode === 'title' ? { title: value } : { blocked: true, blockedNote: value };
-        runCard(id, () => saveTicket(id, changes), mode === 'title' ? '.ticket-title' : '.blocker-summary');
+        runCard(id, () => saveTicket(id, changes), mode === 'title' ? '.ticket-title' : '.ticket-menu-trigger');
     });
     actions.append(save, cancel);
     form.append(label, field, hint, actions);
@@ -256,15 +296,97 @@ function openInlineEditor(id, mode) {
     if (mode === 'title') field.select();
 }
 
+function closeTicketMenus(except) {
+    document.querySelectorAll('.ticket-menu-trigger').forEach(trigger => {
+        if (trigger === except) return;
+        trigger.dispatchEvent(new Event('close-ticket-menu'));
+    });
+}
+
 function ticketCard(ticket) {
     const id = String(ticket.id);
     const card = element('article', `ticket${ticket.blocked ? ' blocked' : ''}`);
     card.dataset.ticketId = id;
     const header = element('div', 'ticket-header');
-    const meta = element('div', 'ticket-meta', `#${id}`);
-    if (ticket.blocked) meta.append(element('span', 'badge', 'BLOCKED'));
-    const tools = element('div', 'ticket-tools');
-    const handle = button('⠿', 'drag-handle', `Move ticket ${id}. Drag or use Left and Right arrow keys.`);
+    const heading = element('h3', 'ticket-heading');
+    const title = button(ticket.title, 'ticket-title', `Edit title of ticket ${id}: ${ticket.title}`);
+    title.title = ticket.blocked ? `Blocked: ${ticket.blockedNote}` : 'Click to edit title';
+    title.addEventListener('click', () => openInlineEditor(id, 'title'));
+    heading.append(title);
+    if (ticket.blocked) {
+        const badge = element('span', 'blocked-indicator');
+        badge.setAttribute('role', 'img');
+        badge.setAttribute('aria-label', 'Blocked');
+        badge.title = 'Blocked';
+        heading.prepend(badge);
+    }
+    const menu = element('div', 'ticket-menu');
+    const trigger = actionButton('', 'more', 'quiet icon-button ticket-menu-trigger', `Actions for ticket ${id}: ${ticket.title}`);
+    trigger.setAttribute('aria-expanded', 'false');
+    trigger.setAttribute('aria-controls', `ticket-actions-${id}`);
+    const panel = element('div', 'ticket-menu-items');
+    panel.id = `ticket-actions-${id}`;
+    panel.hidden = true;
+    panel.append(element('p', 'ticket-reference', `#${id.slice(0, 8)}`));
+    panel.querySelector('.ticket-reference').title = id;
+    let hoverTimer;
+    let leaveTimer;
+    trigger.addEventListener('close-ticket-menu', () => {
+        clearTimeout(hoverTimer);
+        clearTimeout(leaveTimer);
+        trigger.setAttribute('aria-expanded', 'false');
+        panel.hidden = true;
+    });
+    const openMenu = () => {
+        clearTimeout(hoverTimer);
+        clearTimeout(leaveTimer);
+        if (!card.isConnected || refreshing || pendingTickets.has(id) || editingTickets.has(id) || draggedTicketId) return;
+        closeTicketMenus(trigger);
+        panel.hidden = false;
+        trigger.setAttribute('aria-expanded', 'true');
+    };
+    trigger.addEventListener('click', () => {
+        clearTimeout(hoverTimer);
+        clearTimeout(leaveTimer);
+        if (panel.hidden) openMenu();
+        else closeTicketMenus();
+    });
+    menu.addEventListener('pointerenter', event => {
+        if (event.pointerType !== 'mouse') return;
+        clearTimeout(leaveTimer);
+        hoverTimer = setTimeout(openMenu, 250);
+    });
+    menu.addEventListener('pointerleave', event => {
+        if (event.pointerType !== 'mouse') return;
+        clearTimeout(hoverTimer);
+        leaveTimer = setTimeout(() => {
+            if (!menu.contains(document.activeElement)) {
+                trigger.setAttribute('aria-expanded', 'false');
+                panel.hidden = true;
+            }
+        }, 250);
+    });
+    menu.addEventListener('focusout', event => {
+        if (menu.contains(event.relatedTarget)) return;
+        clearTimeout(hoverTimer);
+        clearTimeout(leaveTimer);
+        trigger.setAttribute('aria-expanded', 'false');
+        panel.hidden = true;
+    });
+    menu.addEventListener('keydown', event => {
+        if (event.key === 'Escape' && !panel.hidden) {
+            event.preventDefault();
+            clearTimeout(hoverTimer);
+            clearTimeout(leaveTimer);
+            closeTicketMenus();
+            trigger.focus();
+        } else if (event.key === 'ArrowDown' && event.target === trigger) {
+            event.preventDefault();
+            openMenu();
+            panel.querySelector('button')?.focus();
+        }
+    });
+    const handle = actionButton('Drag to move', 'grip', 'quiet drag-handle', `Move ticket ${id}. Drag or use Left and Right arrow keys.`);
     handle.draggable = true;
     handle.title = 'Drag to move · ← / → when focused';
     handle.setAttribute('aria-keyshortcuts', 'ArrowLeft ArrowRight');
@@ -287,68 +409,52 @@ function ticketCard(ticket) {
         card.classList.add('dragging');
     });
     handle.addEventListener('dragend', clearDrag);
-    const menu = element('details', 'ticket-menu');
-    const summary = element('summary', '', '⋯');
-    summary.setAttribute('aria-label', `Actions for ticket ${id}`);
-    summary.title = 'Ticket actions';
-    summary.addEventListener('click', event => {
-        if (pendingTickets.has(id) || refreshing) event.preventDefault();
-    });
-    const menuItems = element('div', 'ticket-menu-items');
-    if (!ticket.blocked) {
-        const block = button('Mark as blocked', 'quiet');
-        block.addEventListener('click', () => openInlineEditor(id, 'blocker'));
-        menuItems.append(block);
-    }
-    const remove = button('Delete ticket', 'quiet danger');
+    const remove = actionButton('Delete ticket', 'trash', 'quiet danger', `Delete ticket ${id}: ${ticket.title}`);
+    remove.title = 'Delete ticket';
     remove.addEventListener('click', () => {
-        if (pendingTickets.has(id) || refreshing || !window.confirm(`Delete ticket #${id}?`)) return;
-        menu.open = false;
+        if (pendingTickets.has(id) || editingTickets.has(id) || refreshing
+            || !window.confirm(`Delete “${ticket.title}” (#${id.slice(0, 8)})?`)) return;
         runCard(id, async () => {
             await api(`/${id}`, { method: 'DELETE' });
             savedTickets.delete(id);
             card.remove();
             updateColumns();
-            showFeedback(`Deleted ticket #${id}.`);
+            showFeedback(`Deleted ticket #${id.slice(0, 8)}.`);
             if (document.activeElement === document.body) {
                 document.querySelector(`[data-status="${ticket.status}"] .create-form input`).focus();
             }
         });
     });
-    menuItems.append(remove);
-    menu.append(summary, menuItems);
-    menu.addEventListener('toggle', () => {
-        if (!menu.open) return;
-        document.querySelectorAll('.ticket-menu[open]').forEach(other => {
-            if (other !== menu) other.open = false;
-        });
-    });
-    menu.addEventListener('keydown', event => {
-        if (event.key === 'Escape') {
-            menu.open = false;
-            summary.focus();
-        }
-    });
-    tools.append(handle, menu);
-    header.append(meta, tools);
-    const heading = element('h3', 'ticket-heading');
-    const title = button(ticket.title, 'ticket-title', `Edit title of ticket ${id}: ${ticket.title}`);
-    title.title = 'Click to edit title';
-    title.addEventListener('click', () => openInlineEditor(id, 'title'));
-    heading.append(title);
     const blocker = element('div', 'blocker-section');
     if (ticket.blocked) {
-        const note = button('', 'blocker-summary', `Edit blocker for ticket ${id}`);
-        note.append(element('span', 'blocker-label', 'Waiting on'), element('span', 'blocker-preview', ticket.blockedNote));
+        const note = button('', 'blocker-summary', `Edit blocking reason for ticket ${id}: ${ticket.blockedNote}`);
+        note.append(element('span', 'blocker-label', 'Blocked · edit reason'), element('span', 'blocker-preview', ticket.blockedNote));
         note.addEventListener('click', () => openInlineEditor(id, 'blocker'));
-        const unblock = button('Unblock', 'unblock-action');
-        unblock.addEventListener('click', () => runCard(id, () => saveTicket(id, { blocked: false, blockedNote: null })));
-        blocker.append(note, unblock);
+        const unblock = button('Unblock', 'quiet unblock-action');
+        unblock.addEventListener('click', () => runCard(id, () => saveTicket(id, { blocked: false, blockedNote: null }), '.ticket-menu-trigger'));
+        panel.append(note, unblock);
+    } else {
+        const block = actionButton('Block ticket', 'block', 'quiet block-action', `Block ticket ${id}`);
+        block.addEventListener('click', () => openInlineEditor(id, 'blocker'));
+        panel.append(block);
     }
+    const statusIndex = statuses.indexOf(ticket.status);
+    for (const direction of [-1, 1]) {
+        const destination = statuses[statusIndex + direction];
+        if (!destination) continue;
+        const labels = { TODO: 'Move to To do', DOING: direction > 0 ? 'Start ticket' : 'Reopen ticket', DONE: 'Complete ticket' };
+        const move = actionButton(labels[destination], direction < 0 ? 'left' : 'right', 'quiet move-action',
+            `${labels[destination]}: move ticket ${id} to ${destination}`);
+        move.addEventListener('click', () => moveTicket(id, destination));
+        panel.append(move);
+    }
+    panel.append(handle, remove);
+    menu.append(trigger, panel);
+    header.append(heading, menu);
     const message = element('p', 'ticket-feedback');
     message.setAttribute('role', 'status');
     message.setAttribute('aria-live', 'polite');
-    card.append(header, heading, blocker, message);
+    card.append(header, blocker, message);
     return card;
 }
 
@@ -382,10 +488,12 @@ async function loadTickets() {
     }
 }
 
-document.addEventListener('click', event => {
-    document.querySelectorAll('.ticket-menu[open]').forEach(menu => {
-        if (!menu.contains(event.target)) menu.open = false;
-    });
+document.addEventListener('pointerdown', event => {
+    if (!event.target.closest('.ticket-menu')) closeTicketMenus();
+});
+
+document.addEventListener('keydown', event => {
+    if (event.key === 'Escape') closeTicketMenus();
 });
 
 document.querySelectorAll('.column').forEach(column => {
@@ -411,6 +519,8 @@ document.querySelectorAll('.column').forEach(column => {
 document.querySelectorAll('.create-form').forEach(form => {
     const input = form.elements.title;
     const errorMessage = form.querySelector('.create-error');
+    const submit = form.querySelector('button[type="submit"]');
+    submit.prepend(icon('plus'));
     input.addEventListener('input', () => {
         errorMessage.hidden = true;
     });
@@ -422,6 +532,7 @@ document.querySelectorAll('.create-form').forEach(form => {
         errorMessage.hidden = true;
         form.setAttribute('aria-busy', 'true');
         input.disabled = true;
+        submit.disabled = true;
         pendingCreates++;
         updateRefresh();
         try {
@@ -439,8 +550,9 @@ document.querySelectorAll('.create-form').forEach(form => {
             pendingCreates--;
             form.removeAttribute('aria-busy');
             input.disabled = false;
+            submit.disabled = false;
             updateRefresh();
-            if (document.activeElement === document.body || document.activeElement === input) input.focus();
+            if (document.activeElement === document.body || document.activeElement === input || document.activeElement === submit) input.focus();
         }
     });
 });
