@@ -27,12 +27,53 @@ function showFeedback(message, error = false) {
     feedback.classList.toggle('error', error);
 }
 
+function apiErrorMessage(response, data, body) {
+    const text = value => typeof value === 'string' ? value.trim() : '';
+    const labels = {
+        title: 'Title',
+        status: 'Status',
+        blocked: 'Blocked',
+        blockedNote: 'Blocking reason'
+    };
+    const violations = Array.isArray(data?.violations)
+        ? data.violations.flatMap(item => {
+            const message = text(item?.message);
+            if (!message) return [];
+            const path = text(item?.field);
+            const field = path.split('.').pop();
+            return [path ? `${labels[field] || path}: ${message}` : message];
+        })
+        : [];
+    if (violations.length) {
+        return `HTTP ${response.status}:\n${[...new Set(violations)].join('\n')}`;
+    }
+
+    const detail = text(data?.detail) || text(data?.message) || text(data?.error)
+        || text(data?.details).split('\n')[0] || text(data?.title) || text(data);
+    const plainText = data === null && !response.headers.get('content-type')?.includes('html')
+        && !body.trimStart().startsWith('<') ? body.trim() : '';
+    const fallback = response.status >= 500
+        ? 'The server could not process the request. Check the server logs for the cause.'
+        : response.status === 400 || response.status === 422
+            ? 'The server rejected the submitted values without an explanation. The API must return a validation message.'
+            : response.status === 404
+                ? 'This ticket could not be found. Refresh the board and try again.'
+                : 'The server rejected the request without an explanation.';
+    return `HTTP ${response.status}: ${(detail || plainText || fallback).slice(0, 1500)}`;
+}
+
 async function api(path = '', options = {}) {
-    const response = await fetch(`/api/tickets${path}`, {
-        ...options,
-        headers: { 'Accept': 'application/json', ...options.headers }
-    });
-    const body = await response.text();
+    let response;
+    let body;
+    try {
+        response = await fetch(`/api/tickets${path}`, {
+            ...options,
+            headers: { 'Accept': 'application/json', ...options.headers }
+        });
+        body = await response.text();
+    } catch {
+        throw new Error('Could not read a response from the API. Check your connection and refresh the board to confirm the saved state.');
+    }
     let data;
     try {
         data = body ? JSON.parse(body) : null;
@@ -40,14 +81,7 @@ async function api(path = '', options = {}) {
         data = null;
     }
     if (!response.ok) {
-        const violations = Array.isArray(data?.violations)
-            ? data.violations.map(item => `${item.field}: ${item.message}`).join('\n')
-            : '';
-        const detail = violations || data?.message || data?.detail || data?.error
-            || (typeof data === 'string' ? data : '')
-            || (body && !body.trimStart().startsWith('<') ? body.slice(0, 1500) : '')
-            || 'The server rejected the request. Check the server console for details.';
-        throw new Error(`HTTP ${response.status}: ${detail}`);
+        throw new Error(apiErrorMessage(response, data, body));
     }
     if (body && data === null && response.status !== 204) {
         throw new Error('The server returned an unexpected response. Refresh to check the saved state.');
@@ -157,16 +191,10 @@ function clearDrag() {
 function canMove(id, status) {
     const ticket = savedTickets.get(id);
     return ticket && !refreshing && !pendingTickets.has(id) && !editingTickets.has(id)
-        && ticket.status !== status && !(ticket.blocked && status === 'DONE');
+        && ticket.status !== status;
 }
 
 function moveTicket(id, status) {
-    if (savedTickets.get(id)?.blocked && status === 'DONE') {
-        const message = cardFor(id).querySelector('.ticket-feedback');
-        message.textContent = 'Unblock this ticket before moving it to DONE.';
-        message.classList.add('error');
-        return;
-    }
     if (!canMove(id, status)) return;
     runCard(id, () => saveTicket(id, { status }), '.drag-handle');
 }
@@ -188,8 +216,6 @@ function openInlineEditor(id, mode) {
     field.id = `edit-${mode}-${id}`;
     field.name = mode;
     field.value = mode === 'title' ? ticket.title : ticket.blockedNote ?? '';
-    field.required = true;
-    field.maxLength = mode === 'title' ? 200 : 1000;
     if (mode === 'title') field.autocomplete = 'off';
     else field.rows = 3;
     const label = element('label', mode === 'title' ? 'sr-only' : '', mode === 'title' ? 'Ticket title' : 'What is blocking this ticket?');
@@ -207,7 +233,6 @@ function openInlineEditor(id, mode) {
         placeTicket(savedTickets.get(id), mode === 'title' ? '.ticket-title' : '.blocker-summary, .ticket-menu summary');
     };
     cancel.addEventListener('click', cancelEdit);
-    field.addEventListener('input', () => field.setCustomValidity(''));
     form.addEventListener('keydown', event => {
         if (event.isComposing) return;
         if (event.key === 'Escape') {
@@ -220,9 +245,7 @@ function openInlineEditor(id, mode) {
     });
     form.addEventListener('submit', event => {
         event.preventDefault();
-        const value = field.value.trim();
-        field.setCustomValidity(value ? '' : mode === 'title' ? 'Enter a ticket title.' : 'Explain what is blocking this ticket.');
-        if (!form.reportValidity()) return;
+        const value = field.value;
         const changes = mode === 'title' ? { title: value } : { blocked: true, blockedNote: value };
         runCard(id, () => saveTicket(id, changes), mode === 'title' ? '.ticket-title' : '.blocker-summary');
     });
@@ -272,7 +295,7 @@ function ticketCard(ticket) {
         if (pendingTickets.has(id) || refreshing) event.preventDefault();
     });
     const menuItems = element('div', 'ticket-menu-items');
-    if (ticket.status !== 'DONE' && !ticket.blocked) {
+    if (!ticket.blocked) {
         const block = button('Mark as blocked', 'quiet');
         block.addEventListener('click', () => openInlineEditor(id, 'blocker'));
         menuItems.append(block);
@@ -389,15 +412,12 @@ document.querySelectorAll('.create-form').forEach(form => {
     const input = form.elements.title;
     const errorMessage = form.querySelector('.create-error');
     input.addEventListener('input', () => {
-        input.setCustomValidity('');
         errorMessage.hidden = true;
     });
     form.addEventListener('submit', async event => {
         event.preventDefault();
         if (refreshing || form.getAttribute('aria-busy') === 'true') return;
-        const title = input.value.trim();
-        input.setCustomValidity(title ? '' : 'Enter a ticket title.');
-        if (!form.reportValidity()) return;
+        const title = input.value;
         const status = form.closest('.column').dataset.status;
         errorMessage.hidden = true;
         form.setAttribute('aria-busy', 'true');

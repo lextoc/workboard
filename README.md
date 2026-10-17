@@ -6,11 +6,15 @@ A learning project for a ticket board with TODO, DOING, and DONE columns. The ow
 
 - Create tickets in any column, edit titles inline, and delete tickets.
 - Move tickets by dragging the grip or focusing it and pressing the left/right arrow keys.
-- Mark TODO and DOING tickets as blocked, record or edit a blocking reason, and unblock them.
+- Submit blocking requests, record or edit a blocking reason, and unblock tickets.
 - Refresh the board manually to load the current server state.
 - Persist tickets through a JSON REST API, with UUID identifiers.
 
-Blocking is a separate flag, not a column. Blocked tickets can move between TODO and DOING; the UI requires unblocking before moving them to DONE. Unblocking clears the stored reason.
+Blocking is a separate flag, not a column. The API rejects blocked tickets in DONE. Unblocking clears the stored reason.
+
+Frontend input validation is disabled to allow manual testing of API validation. Create and edit forms submit text unchanged, including blank, whitespace-only, and overlong values. The UI also allows attempting to block DONE tickets or move blocked tickets to DONE. Server errors are displayed on the form or ticket. These frontend submission paths were verified by code inspection, not by an executed browser check.
+
+The frontend formats API constraint violations with field labels and displays JSON or plain-text error messages alongside the HTTP status. Empty or HTML error responses produce a fallback message, and connection failures advise refreshing to confirm the saved state. Value-record constructor messages can only be displayed when the API includes them in its response; a Java exception message alone is not an API error contract.
 
 The list endpoint filters out DONE tickets whose completion timestamp is older than five minutes. This does not delete them, and the board only reloads the list on page load or manual refresh. Entering DONE sets the completion timestamp, editing a ticket that remains DONE preserves it, and leaving DONE clears it.
 
