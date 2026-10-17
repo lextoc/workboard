@@ -29,6 +29,7 @@ This project is for the owner's education. The owner builds the application; age
 
 ## Repository conventions
 
+- Keep `README.md` aligned with the current implementation whenever changes or reviews reveal relevant differences in features, API behavior, setup, configuration, commands, or known limitations. Update it as part of the same task when necessary, without waiting for a separate request. README maintenance is explicitly allowed in coaching mode; it does not authorize application code changes. Describe verified behavior and distinguish code inspection from executed checks. Remove or revise known limitations when evidence shows they are resolved; avoid edits when there is no meaningful documentation change.
 - Never commit unless the owner explicitly requests a commit in the current interaction.
 - Do not add explanatory inline comments addressed only to the owner in the current conversation. Comments that serve future readers of the code are acceptable.
 - Explicit requests to maintain this `AGENTS.md` are allowed; keep the learning-first agreement intact unless the owner asks to change it.

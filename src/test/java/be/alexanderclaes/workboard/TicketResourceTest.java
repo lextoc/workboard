@@ -124,15 +124,19 @@ class TicketResourceTest {
     }
 
     @Test
-    void blockedTicketCannotMoveToDoneEvenWhenSimultaneouslyUnblocking() {
+    void blockedTicketCanMoveToDoneWhenSimultaneouslyUnblocking() {
         UUID id = createTicket("Blocked ticket");
         String note = "Waiting for review";
         update(id, state("Blocked ticket", "DOING", true, note)).statusCode(200);
 
-        for (boolean blocked : List.of(true, false)) {
-            update(id, state("Changed title", "DONE", blocked, null)).statusCode(400);
-            assertStoredState(id, "Blocked ticket", "DOING", true, note);
-        }
+        update(id, state("Changed title", "DONE", true, note)).statusCode(400);
+        assertStoredState(id, "Blocked ticket", "DOING", true, note);
+
+        update(id, state("Changed title", "DONE", false, note))
+                .statusCode(200)
+                .body("blockedNote", nullValue())
+                .body("completedAt", notNullValue());
+        assertStoredState(id, "Changed title", "DONE", false, null);
     }
 
     @Test

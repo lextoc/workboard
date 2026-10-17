@@ -72,13 +72,17 @@ public class TicketResource {
                     "Please provide a reason for blocking this ticket.");
         }
 
+        TicketStatus previousStatus = ticket.getStatus();
+
         ticket.setTitle(request.title());
         ticket.setStatus(request.status());
         ticket.setBlocked(request.blocked());
         ticket.setBlockedNote(request.blocked() ? request.blockedNote() : null);
 
-        if (request.status() == TicketStatus.DONE && ticket.getStatus() != TicketStatus.DONE) {
-            ticket.setCompletedAt(Instant.now());
+        if (request.status() == TicketStatus.DONE) {
+            if (previousStatus != TicketStatus.DONE) {
+                ticket.setCompletedAt(Instant.now());
+            }
         } else {
             ticket.setCompletedAt(null);
         }

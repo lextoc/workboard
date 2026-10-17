@@ -12,7 +12,7 @@ A learning project for a ticket board with TODO, DOING, and DONE columns. The ow
 
 Blocking is a separate flag, not a column. Blocked tickets can move between TODO and DOING; the UI requires unblocking before moving them to DONE. Unblocking clears the stored reason.
 
-The list endpoint filters out DONE tickets whose completion timestamp is older than five minutes. This does not delete them, and the board only reloads the list on page load or manual refresh. See the current limitations below for a timestamp bug affecting this behavior.
+The list endpoint filters out DONE tickets whose completion timestamp is older than five minutes. This does not delete them, and the board only reloads the list on page load or manual refresh. Entering DONE sets the completion timestamp, editing a ticket that remains DONE preserves it, and leaving DONE clears it.
 
 ## Stack
 
@@ -76,7 +76,7 @@ New tickets start unblocked with no blocking reason. Update requests require `ti
 }
 ```
 
-`blockedNote` is limited to 1000 characters and must contain nonblank text when `blocked` is true. Requests combining `blocked: true` with `status: "DONE"` are rejected. When `blocked` is false, the stored note is cleared.
+`blockedNote` is limited to 1000 characters and must contain nonblank text when `blocked` is true. Requests combining `blocked: true` with `status: "DONE"` are rejected. The API allows unblocking and completing a ticket in one update by setting `blocked: false` and `status: "DONE"`. When `blocked` is false, the stored note is cleared.
 
 Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and `completedAt`.
 
@@ -87,7 +87,7 @@ Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and 
 ./mvnw package
 ```
 
-The API test suite covers creation, validation, listing order, blocking, unblocking, updates, and missing-ticket updates. The commands above are for running the checks locally; the known test mismatch below still needs resolution.
+The API test suite covers creation, validation, listing order, blocking, unblocking, updates, and missing-ticket updates.
 
 ## Production configuration
 
@@ -106,8 +106,3 @@ java -jar target/quarkus-app/quarkus-run.jar
 ```
 
 Flyway runs migrations from `src/main/resources/db/migration` on production startup. Hibernate validates the resulting schema. The database user needs permission to apply migrations.
-
-## Current limitations
-
-- The update endpoint assigns the new status before checking whether the ticket entered DONE. Consequently, every update clears `completedAt`, and updated DONE tickets disappear from subsequent list results immediately. Creating a ticket directly in DONE does set its completion timestamp.
-- The test `blockedTicketCannotMoveToDoneEvenWhenSimultaneouslyUnblocking` expects a blocked ticket to be unblocked in a separate update before completion. The endpoint currently accepts a single update setting `blocked: false` and `status: "DONE"`. The intended rule and implementation need to be reconciled.
