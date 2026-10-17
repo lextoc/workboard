@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Workboard</title>
+    <link rel="stylesheet" href="styles.css">
+    <script src="app.js" defer></script>
+</head>
+<body>
+<main>
+    <header>
+        <div>
+            <h1>Workboard</h1>
+            <p>Add tickets below. Move them as work progresses.</p>
+        </div>
+        <button id="refresh" type="button">Refresh tickets</button>
+    </header>
+    <p id="feedback" role="status" aria-live="polite">Loading tickets…</p>
+    <div class="board">
+        <section class="column" data-status="TODO" aria-labelledby="todo-heading">
+            <h2 id="todo-heading">TODO <span class="count">0</span></h2>
+            <div class="cards"></div>
+            <form class="create-form" aria-label="Add a TODO ticket">
+                <label class="sr-only" for="todo-title">New TODO ticket title</label>
+                <input id="todo-title" name="title" type="text" required maxlength="200" autocomplete="off" placeholder="Add a ticket…" aria-describedby="todo-create-hint todo-create-error">
+                <p id="todo-create-hint" class="hint">Enter to add to TODO</p>
+                <p id="todo-create-error" class="create-error" role="alert" hidden></p>
+            </form>
+        </section>
+        <section class="column" data-status="DOING" aria-labelledby="doing-heading">
+            <h2 id="doing-heading">DOING <span class="count">0</span></h2>
+            <div class="cards"></div>
+            <form class="create-form" aria-label="Add a DOING ticket">
+                <label class="sr-only" for="doing-title">New DOING ticket title</label>
+                <input id="doing-title" name="title" type="text" required maxlength="200" autocomplete="off" placeholder="Add a ticket…" aria-describedby="doing-create-hint doing-create-error">
+                <p id="doing-create-hint" class="hint">Enter to add to DOING</p>
+                <p id="doing-create-error" class="create-error" role="alert" hidden></p>
+            </form>
+        </section>
+        <section class="column" data-status="DONE" aria-labelledby="done-heading">
+            <h2 id="done-heading">DONE <span class="count">0</span></h2>
+            <div class="cards"></div>
+            <form class="create-form" aria-label="Add a DONE ticket">
+                <label class="sr-only" for="done-title">New DONE ticket title</label>
+                <input id="done-title" name="title" type="text" required maxlength="200" autocomplete="off" placeholder="Add a ticket…" aria-describedby="done-create-hint done-create-error">
+                <p id="done-create-hint" class="hint">Enter to add to DONE</p>
+                <p id="done-create-error" class="create-error" role="alert" hidden></p>
+            </form>
+        </section>
+    </div>
+    <p class="hint">Click a title to edit. Enter saves; Esc cancels. Drag the grip to move a ticket, or focus it and use ← / →.</p>
+</main>
+
+</body>
+</html>
