@@ -55,7 +55,7 @@ public class TicketResource {
     public Response create(@Valid @NotNull CreateTicketRequest request) {
         Ticket ticket = new Ticket();
 
-        ticket.setTitle(request.title());
+        ticket.setTitle(request.title().value());
         ticket.setStatus(request.status());
         ticket.setBlocked(false);
         ticket.setBlockedNote(null);
@@ -81,17 +81,17 @@ public class TicketResource {
                     "Unblock this ticket before moving it to DONE.");
         }
 
-        if (request.blocked() && (request.blockedNote() == null || request.blockedNote().isBlank())) {
+        if (request.blocked() && (request.blockedNote() == null || request.blockedNote().value().isBlank())) {
             throw new BadRequestException(
                     "Please provide a reason for blocking this ticket.");
         }
 
         TicketStatus previousStatus = ticket.getStatus();
 
-        ticket.setTitle(request.title());
+        ticket.setTitle(request.title().value());
         ticket.setStatus(request.status());
         ticket.setBlocked(request.blocked());
-        ticket.setBlockedNote(request.blocked() ? request.blockedNote() : null);
+        ticket.setBlockedNote(request.blocked() ? request.blockedNote().value() : null);
 
         if (request.status() == TicketStatus.DONE) {
             if (previousStatus != TicketStatus.DONE) {
