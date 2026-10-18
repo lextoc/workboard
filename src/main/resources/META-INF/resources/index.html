@@ -3,64 +3,104 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-    <meta name="color-scheme" content="light dark">
+    <meta name="color-scheme" content="light">
     <title>Workboard</title>
     <link rel="stylesheet" href="styles.css">
+    <script src="picker.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
+<a class="skip-link" href="#board">Skip to board</a>
 <main>
     <header>
-        <div>
-            <h1>Workboard</h1>
-            <p>Add tickets below. Move them as work progresses.</p>
-        </div>
-        <button id="refresh" type="button">Refresh tickets</button>
+        <a class="brand" href="./" aria-label="Workboard home">Workboard</a>
+        <div class="header-actions"><button id="manage-projects" type="button" class="quiet">Projects</button><button id="refresh" type="button" class="quiet icon-button" aria-label="Refresh board" title="Refresh board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 18 17"/></svg></button></div>
     </header>
+    <h1 class="sr-only">Tickets</h1>
     <p id="feedback" role="status" aria-live="polite">Loading tickets…</p>
-    <div class="board">
+    <section class="project-toolbar" aria-label="Project workspace">
+        <div class="search-field" role="search" aria-label="Search board">
+            <label for="ticket-search" class="sr-only">Search tickets</label>
+            <div class="search-input">
+                <svg class="search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg>
+                <input id="ticket-search" type="search" placeholder="Search tickets…" autocomplete="off" spellcheck="false" aria-keyshortcuts="/ Meta+k Control+k" aria-describedby="search-help">
+                <span id="search-count" aria-hidden="true" hidden></span>
+                <button id="clear-search" type="button" class="quiet icon-button" aria-label="Clear search" hidden><svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.8" aria-hidden="true"><path d="m5 5 6 6m0-6-6 6"/></svg></button>
+                <kbd id="search-shortcut" aria-hidden="true">⌘ K</kbd>
+            </div>
+            <p id="search-help" class="sr-only">Search titles, projects, blocking reasons, or ticket IDs. All words must match. Enter focuses the first result. Escape clears search.</p>
+        </div>
+        <div class="project-filter-field">
+            <label for="project-filter" class="sr-only">Project filter</label>
+            <project-picker id="project-filter"></project-picker>
+        </div>
+        <button id="blocked-filter" type="button" class="secondary filter-chip" aria-pressed="false">Blocked only</button>
+        <p id="project-notice" class="hint project-notice" role="status" hidden></p>
+    </section>
+    <div class="board-caption"><p id="project-summary" class="hint" role="status" aria-live="polite" aria-atomic="true"></p><button id="clear-filters" type="button" class="quiet" hidden>Reset filters</button></div>
+    <div class="board" id="board" tabindex="-1">
         <section class="column" data-status="TODO" aria-labelledby="todo-heading">
-            <h2 id="todo-heading">TODO <span class="count">0</span></h2>
+            <h2 id="todo-heading">To do <span class="count">0</span></h2>
             <div class="cards"></div>
             <form class="create-form" aria-label="Add a TODO ticket">
                 <label class="sr-only" for="todo-title">New TODO ticket title</label>
                 <div class="create-controls">
-                    <input id="todo-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="todo-create-hint todo-create-error">
+                    <input id="todo-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="todo-create-error">
                     <button type="submit" class="secondary" aria-label="Add a TODO ticket"><span>Add</span></button>
                 </div>
-                <p id="todo-create-hint" class="hint">Add or press Enter · TODO</p>
                 <p id="todo-create-error" class="create-error" role="alert" hidden></p>
             </form>
         </section>
         <section class="column" data-status="DOING" aria-labelledby="doing-heading">
-            <h2 id="doing-heading">DOING <span class="count">0</span></h2>
+            <h2 id="doing-heading">In progress <span class="count">0</span></h2>
             <div class="cards"></div>
             <form class="create-form" aria-label="Add a DOING ticket">
                 <label class="sr-only" for="doing-title">New DOING ticket title</label>
                 <div class="create-controls">
-                    <input id="doing-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="doing-create-hint doing-create-error">
+                    <input id="doing-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="doing-create-error">
                     <button type="submit" class="secondary" aria-label="Add a DOING ticket"><span>Add</span></button>
                 </div>
-                <p id="doing-create-hint" class="hint">Add or press Enter · DOING</p>
                 <p id="doing-create-error" class="create-error" role="alert" hidden></p>
             </form>
         </section>
         <section class="column" data-status="DONE" aria-labelledby="done-heading">
-            <h2 id="done-heading">DONE <span class="count">0</span></h2>
+            <h2 id="done-heading">Done <span class="column-window">Last 24h</span><span class="count">0</span></h2>
             <div class="cards"></div>
             <form class="create-form" aria-label="Add a DONE ticket">
                 <label class="sr-only" for="done-title">New DONE ticket title</label>
                 <div class="create-controls">
-                    <input id="done-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="done-create-hint done-create-error">
+                    <input id="done-title" name="title" type="text" autocomplete="off" placeholder="Add a ticket…" aria-describedby="done-create-error">
                     <button type="submit" class="secondary" aria-label="Add a DONE ticket"><span>Add</span></button>
                 </div>
-                <p id="done-create-hint" class="hint">Add or press Enter · DONE</p>
                 <p id="done-create-error" class="create-error" role="alert" hidden></p>
             </form>
         </section>
     </div>
-    <p class="hint">Drag a card to move it, or click it to edit its title. Enter adds a line; Ctrl/⌘ + Enter saves; Esc cancels. Hover over ⋯ briefly or click it for ticket actions, including moving and blocking.</p>
+    <details class="board-help"><summary>Shortcuts</summary><p>Click a ticket to edit. Enter adds a line; Ctrl/⌘ + Enter saves; Escape cancels. Use the arrow buttons on each ticket to move it between columns. Open ⋯ for project assignment, blocking and deletion. Press / outside a text field to search.</p><p>Done shows tickets completed within the last day. Refresh loads the latest server state.</p></details>
 </main>
-
+<dialog id="project-dialog" aria-labelledby="project-dialog-title">
+    <div class="dialog-heading">
+        <h2 id="project-dialog-title">Projects</h2>
+        <button id="close-projects" class="quiet icon-button dialog-close" type="button" aria-label="Close project management">×</button>
+    </div>
+    <label for="managed-project">Project</label>
+    <project-picker id="managed-project"></project-picker>
+    <form id="project-form" novalidate>
+        <label for="project-name">Project name</label>
+        <input id="project-name" name="name" type="text" autocomplete="off" placeholder="e.g. Website launch">
+        <p id="project-delete-note" class="hint" hidden>Unassign this project’s tickets before deleting it.</p>
+        <div class="project-actions">
+            <button id="delete-project" type="button" class="quiet danger" hidden>Delete project</button>
+            <button id="save-project" type="submit">Create project</button>
+        </div>
+    </form>
+    <p id="project-feedback" class="project-feedback" role="status" aria-live="polite"></p>
+</dialog>
+<dialog id="delete-dialog" aria-labelledby="delete-title" aria-describedby="delete-description">
+    <h2 id="delete-title">Delete ticket?</h2>
+    <p id="delete-description"></p>
+    <p class="hint">This can’t be undone.</p>
+    <div class="dialog-actions"><button id="cancel-delete" type="button" class="secondary" autofocus>Cancel</button><button id="confirm-delete" type="button" class="destructive">Delete ticket</button></div>
+</dialog>
 </body>
 </html>

@@ -1,16 +1,24 @@
 # Workboard
 
-A learning project for a ticket board with TODO, DOING, and DONE columns. The owner builds the application; agents act as coaches and reviewers under the agreement in [AGENTS.md](AGENTS.md).
+A learning project for a ticket board with TODO, DOING, and DONE columns. The owner builds the backend with agents as coaches and reviewers, and delegates frontend implementation to AI under the agreement in [AGENTS.md](AGENTS.md).
 
 ## Current features
 
 - Create tickets in any column, click a card outside its actions menu to edit its title inline in a textarea beside the actions button, and delete tickets. While editing, Enter adds a line, Ctrl/⌘ + Enter saves, and Escape cancels. Saved titles preserve line breaks on the card.
-- Cards show the title, a three-dot actions button, and a small indicator when blocked. Drag a card to another column to move it; dragging is disabled while editing or saving. Hover over the actions button for 250 ms or click/tap it to open movement, blocking, deletion, and drag controls. Menu clicks do not open the title editor. Keyboard users can open the menu with Enter/Space or Arrow Down, Tab through actions, and close it with Escape. The drag control also supports left/right arrow keys.
+- Cards show the title, project name, a three-dot actions button, a monochrome blocked icon when applicable, and visible arrow buttons for moving to adjacent columns. To do and Done have one movement arrow; In progress has two. Arrow buttons work with pointer, touch, Enter, or Space and are disabled while the ticket is editing or saving. Drag-and-drop is not implemented. Hover over the actions button for 250 ms or click/tap it to open assignment, blocking, and deletion controls. Menu and movement clicks do not open the title editor. Keyboard users can open the menu with Enter/Space or Arrow Down, Tab through actions, and close it with Escape.
 - Add tickets with an explicit Add button or Enter. The actions panel contains a shortened UUID reference; the full identifier is retained in API requests and available in the reference tooltip.
 - Submit blocking requests, record or edit a blocking reason, and unblock tickets.
 - Refresh the board manually to load the current server state.
-- Light and dark themes follow the system appearance automatically through CSS, including changes while the page is open; there is no theme toggle or saved override.
+- The app always uses its light appearance, including when the operating system prefers dark mode. There is no theme toggle or dark stylesheet.
 - Persist tickets through a JSON REST API, with UUID identifiers.
+- Show project names on ticket cards and filter the board by all projects, a specific project, or unassigned tickets. Column counts reflect the current filter.
+- Search titles, project names, blocking reasons, and ticket IDs with case-insensitive, multiword matching: every word must appear somewhere on the ticket. Literal punctuation is supported. Matches in titles, project badges, and blocking previews are highlighted safely as text. The search field shows matches within the selected project/blocked scope, a dedicated clear button, and a platform-specific shortcut hint. Press `/` outside text fields or ⌘/Ctrl+K to focus and select the query; Enter focuses the first result without editing it; Escape or Clear search clears only the query. Reset filters also clears the project and Blocked only filter. View controls are disabled during edits and saves.
+- The board starts directly with search and filters. Decorative headings, column descriptions, repeated form hints, and duplicate summary metrics have been removed. Column counts and the result line describe loaded tickets, including the API's one-day completion window shown beside Done. Empty columns distinguish no tickets from no matches. Routine refresh completion is announced to screen readers; errors and action feedback remain visible.
+- The board follows the visual language of [Start](https://start.alexanderclaes.be): white and pale gray surfaces, Apple blue, system typography, fine dividers, rounded controls, and blurred dialog backdrops. Layouts adapt to mobile, with expandable keyboard help. Column headings and counts use plain text, project names use muted metadata, and the header has no decorative monogram. Colored column/filter bullets, project pills, and dashed empty-state boxes are removed. Long project names truncate visually while retaining their full text and tooltip.
+- Project controls use custom `project-picker` elements with styled listboxes instead of native dropdown menus. They support arrow keys, Home/End, Enter/Space, typeahead, Escape, outside-click dismissal, selected-state announcements, and disabled states. Listboxes appear above dialogs and ticket menus and fit the viewport. Ticket deletion uses a styled confirmation dialog with initial focus on Cancel instead of a browser confirmation prompt.
+- Dropdown preferences are saved in local storage under `workboard.dropdowns.v1`: the project filter, a separate new-ticket project for each column, and the selected project in the management dialog. They restore after projects and tickets load. Deleted or unknown projects fall back to All projects, Unassigned, or New project as appropriate; temporary catalog failures preserve saved choices for retry. Invalid or unavailable storage does not block the board. Ticket assignment dropdowns always reflect persisted server data rather than browser preferences.
+- Open Projects to create, rename, or delete a project. Deletion requires a custom confirmation dialog and is disabled with an explanation when loaded tickets are assigned to the project. Successful deletion refreshes the catalog and board and resets a deleted project filter to All projects. Server errors preserve the selection for retry. Newly created projects remain selected in the dialog and appear in the project filter, including projects without tickets.
+- Ticket assignment controls submit the selected project; the resource now resolves and saves assignments, based on code inspection. The frontend verifies the saved assignment through GET and reports any mismatch. When the project list cannot be loaded, management and assignment controls are disabled while existing assignments remain visible and filterable.
 
 Blocking is a separate flag, not a column. The API rejects blocked tickets in DONE. Unblocking clears the stored reason.
 
@@ -18,7 +26,7 @@ Frontend input validation is disabled to allow manual testing of API validation.
 
 The frontend formats API constraint violations with field labels and displays JSON or plain-text error messages alongside the HTTP status. Empty or HTML error responses produce a fallback message, and connection failures advise refreshing to confirm the saved state. Value-record constructor messages can only be displayed when the API includes them in its response; a Java exception message alone is not an API error contract.
 
-The list endpoint filters out DONE tickets whose completion timestamp is older than five minutes. This does not delete them, and the board only reloads the list on page load or manual refresh. Entering DONE sets the completion timestamp, editing a ticket that remains DONE preserves it, and leaving DONE clears it.
+The list endpoint filters out DONE tickets whose completion timestamp is older than one day (verified by code inspection). This does not delete them, and the board only reloads the list on page load or manual refresh. Entering DONE sets the completion timestamp, editing a ticket that remains DONE preserves it, and leaving DONE clears it.
 
 ## Stack
 
@@ -84,7 +92,26 @@ New tickets start unblocked with no blocking reason. Update requests require `ti
 
 `blockedNote` is limited to 1000 characters and must contain nonblank text when `blocked` is true. Requests combining `blocked: true` with `status: "DONE"` are rejected. The API allows unblocking and completing a ticket in one update by setting `blocked: false` and `status: "DONE"`. When `blocked` is false, the stored note is cleared.
 
-Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and `completedAt`.
+Ticket GET and PUT responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, `completedAt`, `projectId`, and `projectName`. Both project fields are null for unassigned tickets. POST still returns the ticket entity rather than the response DTO. Both request DTOs accept a nullable `projectId`, which the resource resolves and applies. An unknown project UUID returns 404 with `{ "message": "Project not found." }`. A null or omitted `projectId` means unassigned, including on PUT. These assignment behaviors were verified by code inspection, not an executed backend check during the UI update.
+
+## Project API
+
+The following endpoints are implemented, based on code inspection. Request and response bodies use JSON.
+
+| Method | Path | Behavior |
+| --- | --- | --- |
+| GET | `/api/projects` | Return an array of `{ "id": "UUID", "name": "Project name" }`, including projects without tickets |
+| POST | `/api/projects` | Create a project from `{ "name": "Project name" }`; return `{id, name}` with status 201 |
+| PUT | `/api/projects/{id}` | Rename a project using `{ "name": "Project name" }`; return `{id, name}` with status 200 |
+| DELETE | `/api/projects/{id}` | Delete a project and return status 204; missing projects return 404 |
+
+Project names must be nonblank and at most 200 characters. Invalid names return 400; renaming or deleting a missing project returns 404 with `{ "message": "Project not found." }`. Deletion counts all assigned tickets, including older DONE tickets. Projects with assigned tickets return 409 with `Unassign this project's tickets before deleting it.` This behavior is verified by regression tests for open and older DONE assignments and by the packaged PostgreSQL smoke exercise. The database foreign key remains necessary for concurrent assignment/deletion races.
+
+Project mutations accept successful 2xx responses, followed by a reload of the project catalog and tickets. Errors appear in the project dialog, preserving the submitted name for retry; names are sent unchanged for server-side validation. These frontend flows were verified with mocked API responses, not against a running backend.
+
+Ticket POST and PUT requests include `projectId` as a UUID string or null. Null means unassigned. Every title, status, blocking, or assignment update sends the current project identifier unless the user explicitly changes it. Choosing a project filter also selects that project in the ticket creation forms; choosing All projects or Unassigned defaults new tickets to no project. Each creation form can override this selection. Reloading restores those per-column overrides independently of the saved project filter. Reset filters saves All projects and resets the new-ticket project defaults to Unassigned; it preserves the project-management selection.
+
+After ticket writes, the frontend reads `/api/tickets/{id}` to render the canonical GET response and verify the saved assignment. If the backend ignores the requested assignment, the UI reports the mismatch rather than showing an optimistic project label. A ticket moved outside the selected project view is hidden and announced. Project management and assignment require a successful project-catalog load; Refresh board retries a failed catalog request.
 
 ## Build and test
 
@@ -93,9 +120,21 @@ Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and 
 ./mvnw --batch-mode verify -DargLine=
 ```
 
-The API test suite covers creation, validation, listing order, blocking, unblocking, updates, and missing-ticket updates.
+The API suite now has 28 tests: the original 16 ticket tests plus 12 project/assignment tests. New coverage includes empty-project listing and ordering, 200-character names, invalid and null requests, renaming an assigned project, missing-project JSON errors, empty-project deletion, protection of open and older DONE assignments, ticket creation with assigned/omitted/null projects, assignment/reassignment/unassignment, and rejected writes leaving stored data unchanged. All 28 API tests passed locally with Java 21 against H2 on 2026-10-18, and Maven verify completed successfully. The existing deletion assertions remain unchanged; the resource now returns its 409 response directly.
 
-Deployment tooling tests run with `python3 -m unittest discover -s deploy/tests -v`. The GitHub Delivery workflow also starts the packaged application against a disposable PostgreSQL 16 database, checks Flyway startup and API operations, and repeats the smoke checks after restarting the application against the same database. These packaged checks are explicit workflow steps; Maven Failsafe integration tests remain disabled by default.
+Frontend browser checks are separate from Maven and use Node.js with an externally available Playwright installation and Chromium. No frontend package dependencies are added to the application. With Playwright available to Node:
+
+```sh
+node --test src/test/frontend/projects.test.cjs
+```
+
+If Playwright is installed elsewhere, set `NODE_PATH` to its containing `node_modules` directory. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use an existing Chromium executable, or use Playwright's installed default browser. Optional `WORKBOARD_SCREENSHOT_DIR` captures desktop and mobile screenshots.
+
+All nineteen frontend browser tests passed on 2026-10-18 using an isolated local static server and mocked API responses. They cover combined search/project/blocked filters, result counts and reset behavior, keyboard search and edit protection, ticket creation and assignment preservation through title and status changes, assignment and unassignment, project creation and renaming with saved-project selection, blank and overlong names, missing-project errors with retries, missing project APIs, ignored assignments, failed updates with retries, and the light appearance under both light and dark system preferences. Crowded boards with 200-character names and keyboard-operated ticket menus were checked at 320px and 960px widths. Additional checks cover custom picker keyboard selection, typeahead and dismissal, visible movement arrows, and ticket deletion confirmation. Search checks cover multiword matching across fields, IDs, literal punctuation, safe highlights, query-only reset, keyboard navigation, and a 320px layout. Project deletion checks cover cancellation, protection of known assignments, successful catalog/filter refresh, 404/409/500 responses, selection preservation, and retry. Dropdown persistence checks cover reloads, independent per-column defaults, reset behavior, deleted projects, server-authoritative ticket assignments, temporary catalog failure and recovery, malformed stored JSON, and blocked storage. Desktop, mobile, dialog, and crowded-board screenshots were visually inspected during the earlier UI iteration; persistence did not change the layout. These checks do not establish end-to-end project functionality against the current backend.
+
+Deployment tooling tests run with `python3 -m unittest discover -s deploy/tests -v`; all 12 passed locally on 2026-10-18, including smoke-resource cleanup on failures and read-only authenticated production checks. The Delivery workflow now also runs all 19 frontend browser tests with Node.js 24 and Playwright 1.62.1 installed in the runner temporary directory. Actionlint accepted the updated workflow locally. The packaged PostgreSQL 16 exercise covers projects, assignment changes, renaming, deletion conflicts, and cleanup on first startup and restart. Asset/list and authentication checks include `/picker.js` and `/api/projects`; public production verification remains read-only. These packaged checks are explicit workflow steps; Maven Failsafe integration tests remain disabled by default.
+
+Additional local packaged verification on PostgreSQL 14 on 2026-10-18 confirmed a populated V1-to-V2 Flyway upgrade and restart: the original ticket retained its title/status and null project fields, with both migration versions recorded successfully. The expanded write smoke exercise passed against a fresh PostgreSQL 14 database, including assigned-project rejection with 409, renaming, assignment changes, and cleanup of both temporary resources. PostgreSQL 16 and the modified GitHub workflow have not been executed in this local verification; no production deployment was performed.
 
 ## Production configuration
 

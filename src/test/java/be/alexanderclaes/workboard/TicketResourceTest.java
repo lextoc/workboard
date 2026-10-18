@@ -1,8 +1,14 @@
 package be.alexanderclaes.workboard;
 
+import be.alexanderclaes.workboard.project.Project;
+import be.alexanderclaes.workboard.ticket.Ticket;
+import be.alexanderclaes.workboard.ticket.TicketStatus;
+import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
 import io.restassured.response.ValidatableResponse;
+import jakarta.inject.Inject;
+import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 
 import java.util.HashMap;
@@ -12,6 +18,7 @@ import java.util.UUID;
 
 import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
+import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 import static org.junit.jupiter.api.Assertions.assertEquals;
@@ -19,6 +26,44 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
 class TicketResourceTest {
+
+    @Inject
+    EntityManager entityManager;
+
+    @Test
+    void getEndpointsIncludeProjectIdentifierAndNameForAssignedTicket() {
+        UUID ticketId = createTicket("Assigned ticket");
+        UUID projectId = QuarkusTransaction.requiringNew().call(() -> {
+            Project project = new Project();
+            project.setName("Workboard");
+            entityManager.persist(project);
+            entityManager.find(Ticket.class, ticketId).setProject(project);
+            return project.getId();
+        });
+
+        try {
+            assertStoredState(ticketId, "Assigned ticket", "TODO", false, null);
+            assertProjectOnGetEndpoints(ticketId, projectId, "Workboard");
+        } finally {
+            QuarkusTransaction.requiringNew().run(() -> {
+                entityManager.remove(entityManager.find(Ticket.class, ticketId));
+                entityManager.remove(entityManager.find(Project.class, projectId));
+            });
+        }
+    }
+
+    @Test
+    void getEndpointsIncludeNullProjectFieldsForUnassignedTicket() {
+        UUID ticketId = createTicket("Unassigned ticket");
+
+        try {
+            assertStoredState(ticketId, "Unassigned ticket", "TODO", false, null);
+            assertProjectOnGetEndpoints(ticketId, null, null);
+        } finally {
+            given().when().delete("/api/tickets/{id}", ticketId)
+                    .then().statusCode(204);
+        }
+    }
 
     @Test
     void createsTicketInEachRequestedColumnWithUnblockedDefaults() {
@@ -215,6 +260,30 @@ class TicketResourceTest {
         given().when().delete("/api/tickets/{id}", id).then().statusCode(204);
 
         update(id, state("Missing ticket", "TODO", false, null)).statusCode(404);
+    }
+
+    private void assertProjectOnGetEndpoints(UUID ticketId, UUID projectId, String projectName) {
+        given()
+                .when().get("/api/tickets/{id}", ticketId)
+                .then()
+                .statusCode(200)
+                .body("id", equalTo(ticketId.toString()))
+                .body("$", hasKey("projectId"))
+                .body("$", hasKey("projectName"))
+                .body("projectId", projectId == null ? nullValue() : equalTo(projectId.toString()))
+                .body("projectName", projectName == null ? nullValue() : equalTo(projectName));
+
+        String ticketPath = "find { it.id == '" + ticketId + "' }";
+
+        given()
+                .when().get("/api/tickets")
+                .then()
+                .statusCode(200)
+                .body(ticketPath + ".id", equalTo(ticketId.toString()))
+                .body(ticketPath, hasKey("projectId"))
+                .body(ticketPath, hasKey("projectName"))
+                .body(ticketPath + ".projectId", projectId == null ? nullValue() : equalTo(projectId.toString()))
+                .body(ticketPath + ".projectName", projectName == null ? nullValue() : equalTo(projectName));
     }
 
     private UUID createTicket(String title) {

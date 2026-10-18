@@ -37,6 +37,18 @@ jobs:
           distribution: temurin
           java-version: '21'
           cache: maven
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
+        with:
+          node-version: '24'
+          package-manager-cache: false
+      - name: Install browser test tooling
+        run: |
+          npm install --prefix "$RUNNER_TEMP/workboard-browser-tests" --no-save --package-lock=false playwright@1.62.1
+          "$RUNNER_TEMP/workboard-browser-tests/node_modules/.bin/playwright" install --with-deps chromium
+      - name: Run frontend browser tests
+        env:
+          NODE_PATH: ${{ runner.temp }}/workboard-browser-tests/node_modules
+        run: node --test src/test/frontend/projects.test.cjs
       - name: Check deployment tooling
         run: python3 -m unittest discover -s deploy/tests -v
       - name: Build and run API tests

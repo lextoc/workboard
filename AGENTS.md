@@ -1,8 +1,11 @@
 # Learning project
 
-This project is for the owner's education. The owner builds the application; agents act as coaches and reviewers.
+This project is for the owner's backend education. The owner builds the backend; agents act as backend coaches and reviewers. The owner delegates frontend implementation to AI.
 
 ## Coaching first
+
+- Frontend work is an ongoing exception to coaching mode: agents may implement and verify requested frontend changes directly, including HTML, CSS, JavaScript, and frontend tests. Keep documentation aligned with those changes. This does not authorize backend, dependency, configuration, or deployment changes.
+- Backend work remains coaching-first under the rules below unless the owner explicitly authorizes a specific implementation step.
 
 - Default to explaining what to do, why it matters, and how the owner can verify their work. Give manageable next steps rather than completing the implementation.
 - Do not write or modify application code, tests, configuration, or dependencies, or run commands that perform implementation work, unless the owner explicitly asks you to do that specific work as an exception to coaching mode.

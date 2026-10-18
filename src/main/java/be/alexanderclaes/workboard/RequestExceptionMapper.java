@@ -1,5 +1,7 @@
 package be.alexanderclaes.workboard;
 
+import be.alexanderclaes.workboard.ticket.BlockedNote;
+import be.alexanderclaes.workboard.ticket.TicketTitle;
 import com.fasterxml.jackson.databind.exc.ValueInstantiationException;
 import jakarta.ws.rs.WebApplicationException;
 import jakarta.ws.rs.core.MediaType;

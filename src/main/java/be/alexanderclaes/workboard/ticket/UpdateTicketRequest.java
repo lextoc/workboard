@@ -1,14 +1,15 @@
-package be.alexanderclaes.workboard;
+package be.alexanderclaes.workboard.ticket;
 
-import jakarta.validation.constraints.Size;
 import jakarta.validation.constraints.NotNull;
-import jakarta.validation.constraints.NotBlank;
+
+import java.util.UUID;
 
 public record UpdateTicketRequest(
         @NotNull TicketTitle title,
         @NotNull TicketStatus status,
         @NotNull Boolean blocked,
-        BlockedNote blockedNote
+        BlockedNote blockedNote,
+        UUID projectId
 ) {
 
 }

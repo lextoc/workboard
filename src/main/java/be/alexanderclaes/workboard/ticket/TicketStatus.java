@@ -1,4 +1,4 @@
-package be.alexanderclaes.workboard;
+package be.alexanderclaes.workboard.ticket;
 
 public enum TicketStatus {
     TODO,
