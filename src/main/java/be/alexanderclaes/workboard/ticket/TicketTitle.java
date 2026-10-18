@@ -1,4 +1,4 @@
-package be.alexanderclaes.workboard;
+package be.alexanderclaes.workboard.ticket;
 
 import com.fasterxml.jackson.annotation.JsonCreator;
 import com.fasterxml.jackson.annotation.JsonValue;

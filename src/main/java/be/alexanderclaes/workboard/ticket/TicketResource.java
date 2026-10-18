@@ -1,4 +1,4 @@
-package be.alexanderclaes.workboard;
+package be.alexanderclaes.workboard.ticket;
 
 import jakarta.persistence.EntityManager;
 import jakarta.validation.constraints.NotNull;
@@ -22,7 +22,7 @@ public class TicketResource {
     EntityManager entityManager;
 
     @GET
-    public List<Ticket> getTickets() {
+    public List<TicketResponse> getTickets() {
         Instant cutoff = Instant.now().minus(Duration.ofDays(1));
 
         return entityManager.createQuery(
@@ -35,19 +35,22 @@ public class TicketResource {
                 )
                 .setParameter("done", TicketStatus.DONE)
                 .setParameter("cutoff", cutoff)
-                .getResultList();
+                .getResultList()
+                .stream()
+                .map(TicketResponse::from)
+                .toList();
     }
 
     @GET
     @Path("/{id}")
-    public Ticket getTicket(@PathParam("id") UUID id) {
+    public TicketResponse getTicket(@PathParam("id") UUID id) {
         Ticket ticket = entityManager.find(Ticket.class, id);
 
         if (ticket == null) {
             throw new NotFoundException("Ticket not found.");
         }
 
-        return ticket;
+        return TicketResponse.from(ticket);
     }
 
     @Transactional

@@ -1,5 +1,6 @@
-package be.alexanderclaes.workboard;
+package be.alexanderclaes.workboard.ticket;
 
+import be.alexanderclaes.workboard.project.Project;
 import jakarta.persistence.*;
 
 import java.time.Instant;
@@ -67,5 +68,17 @@ public class Ticket {
 
     public Instant getCompletedAt() {
         return completedAt;
+    }
+
+    @ManyToOne(optional = true)
+    @JoinColumn(name = "project_id", nullable = true)
+    private Project project;
+
+    public Project getProject() {
+        return project;
+    }
+
+    public void setProject(Project project) {
+        this.project = project;
     }
 }
