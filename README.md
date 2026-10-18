@@ -28,7 +28,7 @@ The list endpoint filters out DONE tickets whose completion timestamp is older t
 - Quarkus REST with Jackson and ArC dependency injection
 - H2 for development and tests; PostgreSQL with Flyway migrations for production
 - Plain HTML, CSS, and JavaScript served by Quarkus, with no separate frontend build
-- Quarkus JUnit and REST Assured for API tests
+- Quarkus JUnit and REST Assured for API tests; MicroProfile Health readiness checks
 
 ## Setup
 
@@ -89,11 +89,13 @@ Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and 
 ## Build and test
 
 ```sh
-./mvnw test
-./mvnw package
+./mvnw test -DargLine=
+./mvnw --batch-mode verify -DargLine=
 ```
 
 The API test suite covers creation, validation, listing order, blocking, unblocking, updates, and missing-ticket updates.
+
+Deployment tooling tests run with `python3 -m unittest discover -s deploy/tests -v`. The GitHub Delivery workflow also starts the packaged application against a disposable PostgreSQL 16 database, checks Flyway startup and API operations, and repeats the smoke checks after restarting the application against the same database. These packaged checks are explicit workflow steps; Maven Failsafe integration tests remain disabled by default.
 
 ## Production configuration
 
@@ -113,13 +115,15 @@ java -jar target/quarkus-app/quarkus-run.jar
 
 Flyway runs migrations from `src/main/resources/db/migration` on production startup. Hibernate validates the resulting schema. The database user needs permission to apply migrations.
 
+The health extension exposes `/q/health/ready`, including datasource readiness. The production nginx gateway protects this endpoint with the same HTTP authentication as the rest of the site.
+
 The application does not implement its own authentication or authorization. The deployed site uses nginx HTTP Basic authentication over HTTPS to protect both the page and `/api/tickets`. The backend binds only to localhost, so public requests must pass through nginx. Running the application directly without that gateway does not provide authentication.
 
 The repository also includes a JVM Dockerfile at `src/main/docker/Dockerfile.jvm`. The current droplet deployment uses the packaged application directly with Java 21 and systemd.
 
 ## Live deployment
 
-The production board is hosted at https://workboard.alexanderclaes.be on the existing droplet, reached administratively through `ssh root@alexanderclaes.be`. Deployment configuration is tracked in `deploy/`; passwords and database credentials are kept only on the server.
+The production board is hosted at https://workboard.alexanderclaes.be on the existing droplet, reached administratively through `ssh root@alexanderclaes.be`. Deployment configuration is tracked in `deploy/`; database credentials stay on the server. The separate deployment SSH key and HTTP smoke-test credentials are stored as encrypted GitHub production environment secrets.
 
 | Component | Location or behavior |
 | --- | --- |
@@ -135,8 +139,12 @@ The production board is hosted at https://workboard.alexanderclaes.be on the exi
 
 Backups are stored on the same droplet. They do not protect against losing the droplet or its disk; off-server backup storage is not configured.
 
-For a new release, build with `./mvnw package -DargLine=`, upload the entire `target/quarkus-app/` directory into a new release directory, switch the `current` symlink, and restart `workboard.service`. Keep the previous release for rollback. Flyway runs on each startup; rolling back application files does not reverse database migrations.
+The manual release procedure is to build with `./mvnw package -DargLine=`, upload the entire `target/quarkus-app/` directory into a new release directory, switch the `current` symlink, and restart `workboard.service`. Keep the previous release for rollback. Flyway runs on each startup; rolling back application files does not reverse database migrations.
+
+The [GitHub Delivery workflow](.github/workflows/delivery.yml) automates checks on pull requests and deploys successful builds of `main`. GitHub and the droplet have been configured for this workflow. See [deployment setup and recovery](deploy/README.md) for the exact changes, credentials, branch rules, and rollback behavior. Deployment helper changes require a separate administrative installation; application deployments do not replace the privileged server tooling.
 
 Inspect application logs with `journalctl -u workboard.service` and trigger a backup with `systemctl start workboard-backup.service`. The backup job checks that each dump has a readable archive directory; a full restore drill has not been performed.
 
 Deployment verification on 2026-10-17: all 14 API tests passed during packaging. Live HTTPS checks confirmed anonymous requests are rejected for the frontend, assets, and API methods; authenticated assets match the workspace; ticket creation, updates, blocking, completion, and deletion work against PostgreSQL; and a temporary ticket survived a service restart before being removed. HTTP redirects to HTTPS, the backend port is not publicly reachable, and a database dump completed successfully. Development H2 data was not migrated. Browser rendering and interaction checks were not performed as part of deployment.
+
+Local automation verification on 2026-10-18: the Java 21 build and all 14 API tests passed; eight deployment-tooling tests passed; Actionlint 1.7.12 accepted the workflow. Packaged API smoke checks passed against an isolated local PostgreSQL 14 database on first startup and restart, with one successful Flyway migration and no remaining smoke tickets. Administrative setup verified the GitHub environment and branch protection, the restricted deployment connection, and rejection of arbitrary SSH commands and corrupt uploads. PostgreSQL 16 checks and production deployment results are recorded in [GitHub Actions](https://github.com/lextoc/workboard/actions/workflows/delivery.yml).
