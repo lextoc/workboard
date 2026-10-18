@@ -12,7 +12,8 @@ A learning project for a ticket board with TODO, DOING, and DONE columns. The ow
 - Light and dark themes follow the system appearance automatically through CSS, including changes while the page is open; there is no theme toggle or saved override.
 - Persist tickets through a JSON REST API, with UUID identifiers.
 - Show project names on ticket cards and filter the board by all projects, a specific project, or unassigned tickets. Column counts reflect the current filter.
-- The frontend includes project creation, renaming, deletion, and ticket assignment controls for the API contract below. These controls are not yet usable with the current backend: project endpoints are missing and ticket writes ignore assignments. When the project list cannot be loaded, management and assignment controls are disabled while existing assignments remain visible and filterable.
+- Manage projects from the board to create or rename them. Newly created projects remain selected in the dialog and appear in the project filter, including projects without tickets. Project deletion is not offered because the backend has no deletion endpoint.
+- Ticket assignment controls submit the selected project, but ticket writes still ignore assignments in the current backend. The frontend reports this mismatch. When the project list cannot be loaded, management and assignment controls are disabled while existing assignments remain visible and filterable.
 
 Blocking is a separate flag, not a column. The API rejects blocked tickets in DONE. Unblocking clears the stored reason.
 
@@ -88,18 +89,19 @@ New tickets start unblocked with no blocking reason. Update requests require `ti
 
 Ticket GET responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, `completedAt`, `projectId`, and `projectName`. Both project fields are null for unassigned tickets. POST and PUT still return ticket entities rather than the GET response DTO. Their request DTOs accept a nullable `projectId`, but the resource does not yet apply it.
 
-## Project frontend API contract
+## Project API
 
-The frontend is prepared for the following backend endpoints. They are planned contracts, not currently implemented project endpoints.
+The following endpoints are implemented, based on code inspection. Request and response bodies use JSON.
 
-| Method | Path | Expected behavior |
+| Method | Path | Behavior |
 | --- | --- | --- |
 | GET | `/api/projects` | Return an array of `{ "id": "UUID", "name": "Project name" }`, including projects without tickets |
-| POST | `/api/projects` | Create a project from `{ "name": "Project name" }` |
-| PUT | `/api/projects/{id}` | Rename a project using `{ "name": "Project name" }` |
-| DELETE | `/api/projects/{id}` | Delete an unassigned project; reject deletion if any tickets still reference it |
+| POST | `/api/projects` | Create a project from `{ "name": "Project name" }`; return `{id, name}` with status 201 |
+| PUT | `/api/projects/{id}` | Rename a project using `{ "name": "Project name" }`; return `{id, name}` with status 200 |
 
-Project mutations accept successful 2xx responses, followed by a reload of the project catalog and tickets. Errors appear in the project dialog; names are sent unchanged for server-side validation. The backend must enforce project-name validation and reject deletion of assigned projects, including tickets omitted from the board's completion window.
+Project names must be nonblank and at most 200 characters. Invalid names return 400; renaming a missing project returns 404 with `{ "message": "Project not found." }`. Project deletion is not implemented.
+
+Project mutations accept successful 2xx responses, followed by a reload of the project catalog and tickets. Errors appear in the project dialog, preserving the submitted name for retry; names are sent unchanged for server-side validation. These frontend flows were verified with mocked API responses, not against a running backend.
 
 Ticket POST and PUT requests include `projectId` as a UUID string or null. Null means unassigned. Every title, status, blocking, or assignment update sends the current project identifier unless the user explicitly changes it. Choosing a project filter also selects that project in the ticket creation forms; choosing All projects or Unassigned defaults new tickets to no project. Each creation form can override this selection.
 
@@ -122,7 +124,7 @@ node --test src/test/frontend/projects.test.cjs
 
 If Playwright is installed elsewhere, set `NODE_PATH` to its containing `node_modules` directory. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use an existing Chromium executable, or use Playwright's installed default browser. Optional `WORKBOARD_SCREENSHOT_DIR` captures desktop and mobile screenshots.
 
-All eight frontend browser tests passed on 2026-10-18 using an isolated local static server and mocked API responses. They cover project filtering and visible counts, ticket creation and assignment preservation through title and status changes, assignment and unassignment, project creation/rename/delete and deletion conflicts, missing project APIs, ignored assignments, failed updates with retries, and mobile light/dark layouts. Desktop and mobile screenshots were visually inspected. These checks do not establish end-to-end project functionality against the current backend.
+All nine frontend browser tests passed on 2026-10-18 using an isolated local static server and mocked API responses. They cover project filtering and visible counts, ticket creation and assignment preservation through title and status changes, assignment and unassignment, project creation and renaming with saved-project selection, blank and overlong names, missing-project errors with retries, missing project APIs, ignored assignments, failed updates with retries, and mobile light/dark layouts. Screenshots were captured and the mobile dark project dialog was visually inspected. These checks do not establish end-to-end project functionality against the current backend.
 
 Deployment tooling tests run with `python3 -m unittest discover -s deploy/tests -v`. The GitHub Delivery workflow also starts the packaged application against a disposable PostgreSQL 16 database, checks Flyway startup and API operations, and repeats the smoke checks after restarting the application against the same database. These packaged checks are explicit workflow steps; Maven Failsafe integration tests remain disabled by default.
 
