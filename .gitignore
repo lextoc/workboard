@@ -46,3 +46,6 @@ nb-configuration.xml
 
 # Added after init
 /data/
+
+# Deployment tooling
+__pycache__/

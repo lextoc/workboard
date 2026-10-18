@@ -1,0 +1,176 @@
+#!/usr/bin/python3 -I
+import base64
+import fcntl
+import hashlib
+import json
+import os
+from pathlib import Path, PurePosixPath
+import re
+import shutil
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+import urllib.error
+import urllib.request
+import zipfile
+
+
+ROOT = Path("/opt/workboard")
+MAX_ARCHIVE = 128 * 1024 * 1024
+MAX_EXPANDED = 512 * 1024 * 1024
+
+
+def unpack(archive, destination):
+    with tarfile.open(archive, "r:gz") as bundle:
+        seen = set()
+        size = 0
+        for count, member in enumerate(bundle, 1):
+            path = PurePosixPath(member.name)
+            if path.is_absolute() or ".." in path.parts or not (member.isfile() or member.isdir()):
+                raise ValueError("Archive contains an unsafe path or file type")
+            if not path.parts:
+                if member.isdir():
+                    continue
+                raise ValueError("Archive has an invalid root entry")
+            if path in seen or count > 10000:
+                raise ValueError("Archive contains duplicate paths or too many entries")
+            seen.add(path)
+            size += member.size
+            if size > MAX_EXPANDED:
+                raise ValueError("Expanded archive exceeds size limit")
+            target = destination.joinpath(*path.parts)
+            if member.isdir():
+                target.mkdir(parents=True, exist_ok=True)
+            else:
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with bundle.extractfile(member) as source, target.open("xb") as output:
+                    shutil.copyfileobj(source, output)
+                target.chmod(0o644)
+        for directory in [destination, *destination.rglob("*")]:
+            if directory.is_dir():
+                directory.chmod(0o755)
+    if not (destination / "quarkus-run.jar").is_file() or not list((destination / "app").glob("*.jar")):
+        raise ValueError("Archive is not a Quarkus fast-jar release")
+
+
+def migrations(release):
+    result = {}
+    for jar in sorted((release / "app").glob("*.jar")):
+        with zipfile.ZipFile(jar) as bundle:
+            for item in bundle.infolist():
+                if item.filename.startswith("db/migration/") and not item.is_dir():
+                    if item.filename in result or item.file_size > 10 * 1024 * 1024:
+                        raise ValueError("Duplicate or oversized database migration")
+                    result[item.filename] = hashlib.sha256(bundle.read(item)).hexdigest()
+    if not result:
+        raise ValueError("Release has no database migrations")
+    return result
+
+
+def switch(release):
+    temporary = ROOT / ".current-next"
+    temporary.unlink(missing_ok=True)
+    temporary.symlink_to(release)
+    os.replace(temporary, ROOT / "current")
+
+
+def request(url, credentials=None):
+    headers = {}
+    if credentials:
+        token = base64.b64encode(f"{credentials['username']}:{credentials['password']}".encode()).decode()
+        headers["Authorization"] = "Basic " + token
+    try:
+        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5) as response:
+            return response.status, response.read()
+    except urllib.error.HTTPError as error:
+        return error.code, error.read()
+
+
+def verify(require_health=True):
+    deadline = time.monotonic() + 90
+    while time.monotonic() < deadline:
+        try:
+            active = subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "workboard.service"]).returncode == 0
+            status, body = request("http://127.0.0.1:18083/api/tickets")
+            if active and status == 200 and isinstance(json.loads(body), list):
+                if not require_health:
+                    break
+                status, body = request("http://127.0.0.1:18083/q/health/ready")
+                if status == 200 and json.loads(body)["status"] == "UP":
+                    break
+        except (OSError, ValueError, KeyError):
+            pass
+        time.sleep(2)
+    else:
+        raise RuntimeError("Backend did not become ready within 90 seconds")
+    credentials = json.loads(Path("/etc/workboard/deploy-smoke.json").read_text())
+    for path in ["/", "/app.js", "/styles.css", "/api/tickets"]:
+        url = "https://workboard.alexanderclaes.be" + path
+        if request(url)[0] != 401 or request(url, credentials)[0] != 200:
+            raise RuntimeError(f"Public authentication or proxy check failed for {path}")
+
+
+def deploy(release_id, expected_hash):
+    releases = ROOT / "releases"
+    release = releases / release_id
+    if release.exists():
+        raise ValueError("Release already exists; rerun the GitHub workflow to create a new release")
+    previous = (ROOT / "current").resolve(strict=True)
+    with tempfile.TemporaryDirectory(prefix=".incoming-", dir=ROOT) as temporary:
+        temporary = Path(temporary)
+        archive = temporary / "release.tar.gz"
+        digest = hashlib.sha256()
+        size = 0
+        with archive.open("wb") as output:
+            while chunk := sys.stdin.buffer.read(1024 * 1024):
+                size += len(chunk)
+                if size > MAX_ARCHIVE:
+                    raise ValueError("Archive exceeds size limit")
+                digest.update(chunk)
+                output.write(chunk)
+        if digest.hexdigest() != expected_hash:
+            raise ValueError("Archive checksum does not match")
+        staged = temporary / "application"
+        staged.mkdir()
+        unpack(archive, staged)
+        rollback_safe = migrations(staged) == migrations(previous)
+        subprocess.run(["/usr/bin/systemctl", "start", "workboard-backup.service"], check=True, timeout=120)
+        (staged / ".release.json").write_text(json.dumps({
+            "release": release_id, "commit": release_id[:40], "sha256": expected_hash,
+            "previous": str(previous), "automatic_rollback_safe": rollback_safe,
+        }) + "\n")
+        (staged / ".release.json").chmod(0o644)
+        staged.rename(release)
+        switch(release)
+        try:
+            subprocess.run(["/usr/bin/systemctl", "restart", "workboard.service"], check=True, timeout=60)
+            verify()
+        except Exception:
+            print("Deployment verification failed; application logs remain in the server journal.", flush=True)
+            if rollback_safe:
+                switch(previous)
+                subprocess.run(["/usr/bin/systemctl", "restart", "workboard.service"], check=True, timeout=60)
+                verify(require_health=False)
+                print(f"Restored previous application release: {previous.name}", flush=True)
+            else:
+                subprocess.run(["/usr/bin/systemctl", "stop", "workboard.service"], check=True, timeout=60)
+                print("Migration files changed. Service stopped; manual database recovery is required.", flush=True)
+            raise
+    print(f"Deployment verified: {release_id}", flush=True)
+
+
+def main():
+    if len(sys.argv) != 3 or not re.fullmatch(r"[0-9a-f]{40}-[0-9]+-[0-9]+", sys.argv[1]) or not re.fullmatch(r"[0-9a-f]{64}", sys.argv[2]):
+        raise SystemExit("Usage: workboard-deploy COMMIT-RUN-ATTEMPT SHA256")
+    if os.geteuid() != 0:
+        raise SystemExit("Deployment requires the restricted sudo entry point")
+    os.umask(0o022)
+    with (ROOT / ".deploy.lock").open("w") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        deploy(*sys.argv[1:])
+
+
+if __name__ == "__main__":
+    main()
