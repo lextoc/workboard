@@ -4,8 +4,8 @@ A learning project for a ticket board with TODO, DOING, and DONE columns. The ow
 
 ## Current features
 
-- Create tickets in any column, edit titles inline in a textarea beside the actions button, and delete tickets. While editing, Enter adds a line, Ctrl/⌘ + Enter saves, and Escape cancels. Saved titles preserve line breaks on the card.
-- Cards show the title, a three-dot actions button, and a small indicator when blocked. Hover over the actions button for 250 ms or click/tap it to open movement, blocking, deletion, and drag controls. Keyboard users can open it with Enter/Space or Arrow Down, Tab through actions, and close it with Escape. The drag control also supports left/right arrow keys.
+- Create tickets in any column, click a card outside its actions menu to edit its title inline in a textarea beside the actions button, and delete tickets. While editing, Enter adds a line, Ctrl/⌘ + Enter saves, and Escape cancels. Saved titles preserve line breaks on the card.
+- Cards show the title, a three-dot actions button, and a small indicator when blocked. Drag a card to another column to move it; dragging is disabled while editing or saving. Hover over the actions button for 250 ms or click/tap it to open movement, blocking, deletion, and drag controls. Menu clicks do not open the title editor. Keyboard users can open the menu with Enter/Space or Arrow Down, Tab through actions, and close it with Escape. The drag control also supports left/right arrow keys.
 - Add tickets with an explicit Add button or Enter. The actions panel contains a shortened UUID reference; the full identifier is retained in API requests and available in the reference tooltip.
 - Submit blocking requests, record or edit a blocking reason, and unblock tickets.
 - Refresh the board manually to load the current server state.

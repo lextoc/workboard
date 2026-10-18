@@ -174,6 +174,7 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
     updateRefresh();
     clearDrag();
     card.setAttribute('aria-busy', 'true');
+    card.draggable = false;
     controls.forEach(control => { control.disabled = true; });
     const message = card.querySelector('.ticket-feedback');
     message.classList.remove('error', 'sr-only');
@@ -190,6 +191,7 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
         updateRefresh();
         if (card.isConnected) {
             card.removeAttribute('aria-busy');
+            card.draggable = !editingTickets.has(id);
             controls.forEach((control, index) => { control.disabled = disabled[index]; });
         }
         if (document.activeElement === document.body || card.contains(document.activeElement)) {
@@ -246,6 +248,7 @@ function openInlineEditor(id, mode) {
     const card = cardFor(id);
     editingTickets.add(id);
     card.classList.add('editing');
+    card.draggable = false;
     closeTicketMenus();
     card.querySelectorAll('button').forEach(control => { control.disabled = true; });
     card.querySelector('.ticket-feedback').textContent = '';
@@ -307,11 +310,24 @@ function ticketCard(ticket) {
     const id = String(ticket.id);
     const card = element('article', `ticket${ticket.blocked ? ' blocked' : ''}`);
     card.dataset.ticketId = id;
+    card.draggable = true;
+    let suppressClick = false;
+    card.addEventListener('pointerdown', event => {
+        card.draggable = !refreshing && !pendingTickets.has(id) && !editingTickets.has(id)
+            && (!event.target.closest('.ticket-menu') || !!event.target.closest('.drag-handle'));
+    });
+    card.addEventListener('click', event => {
+        if (suppressClick || event.target.closest('.ticket-menu, .inline-editor')) return;
+        if (editingTickets.has(id)) {
+            card.querySelector('textarea[name="title"]')?.focus();
+            return;
+        }
+        openInlineEditor(id, 'title');
+    });
     const header = element('div', 'ticket-header');
     const heading = element('h3', 'ticket-heading');
     const title = button(ticket.title, 'ticket-title', `Edit title of ticket ${id}: ${ticket.title}`);
     title.title = ticket.blocked ? `Blocked: ${ticket.blockedNote}` : 'Click to edit title';
-    title.addEventListener('click', () => openInlineEditor(id, 'title'));
     heading.append(title);
     if (ticket.blocked) {
         const badge = element('span', 'blocked-indicator');
@@ -397,18 +413,23 @@ function ticketCard(ticket) {
         const destination = statuses[statuses.indexOf(ticket.status) + direction];
         if (destination) moveTicket(id, destination);
     });
-    handle.addEventListener('dragstart', event => {
-        if (refreshing || pendingTickets.has(id) || editingTickets.has(id)) {
+    card.addEventListener('dragstart', event => {
+        if (refreshing || pendingTickets.has(id) || editingTickets.has(id) || !card.draggable) {
             event.preventDefault();
             return;
         }
+        suppressClick = true;
+        closeTicketMenus();
         draggedTicketId = id;
         event.dataTransfer.setData('text/plain', id);
         event.dataTransfer.effectAllowed = 'move';
         event.dataTransfer.setDragImage(card, card.offsetWidth / 2, 20);
         card.classList.add('dragging');
     });
-    handle.addEventListener('dragend', clearDrag);
+    card.addEventListener('dragend', () => {
+        clearDrag();
+        setTimeout(() => { suppressClick = false; }, 0);
+    });
     const remove = actionButton('Delete ticket', 'trash', 'quiet danger', `Delete ticket ${id}: ${ticket.title}`);
     remove.title = 'Delete ticket';
     remove.addEventListener('click', () => {

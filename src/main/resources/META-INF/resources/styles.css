@@ -175,6 +175,9 @@ h2 { font-size: .75rem; font-weight: 650; letter-spacing: .09em; margin: 0 0 18p
     border-radius: 10px; min-width: 0; box-shadow: 0 3px 8px var(--ticket-shadow);
 }
 .ticket:hover { border-color: var(--ticket-hover-border); }
+.ticket[draggable="true"] { cursor: grab; }
+.ticket[draggable="true"]:active { cursor: grabbing; }
+.ticket[draggable="true"] .ticket-title { cursor: inherit; user-select: none; }
 .ticket.blocked { border-left: 3px solid var(--warning); }
 .ticket.dragging { opacity: .45; }
 .ticket-header { display: flex; align-items: flex-start; gap: 6px; }
