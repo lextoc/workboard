@@ -77,10 +77,33 @@ public class ProjectResource {
         Project project = entityManager.find(Project.class, id);
 
         if (project == null) {
-            throw new NotFoundException("Project not found.");
+            throw new NotFoundException(
+                    Response.status(Response.Status.NOT_FOUND)
+                            .type(MediaType.APPLICATION_JSON_TYPE)
+                            .entity(Map.of("message", "Project not found."))
+                            .build()
+            );
+        }
+
+        long assignedTickets = entityManager.createQuery(
+                "SELECT COUNT(t) FROM Ticket t WHERE t.project.id = :projectId",
+                Long.class
+        )
+                .setParameter("projectId", id)
+                .getSingleResult();
+
+        if (assignedTickets > 0) {
+            // In the future, we would delete all assigned tickets or set their projectId to null.
+            throw new BadRequestException(
+                    Response.status(Response.Status.CONFLICT)
+                            .type(MediaType.APPLICATION_JSON_TYPE)
+                            .entity(Map.of("message", "Unassign this project's tickets before deleting it."))
+                            .build()
+            );
         }
 
         entityManager.remove(project);
+
         return Response.noContent().build();
     }
 }
