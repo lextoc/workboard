@@ -1,5 +1,6 @@
 package be.alexanderclaes.workboard.project;
 
+import be.alexanderclaes.workboard.ticket.Ticket;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
@@ -67,5 +68,19 @@ public class ProjectResource {
         project.setName(request.name());
 
         return ProjectResponse.from(project);
+    }
+
+    @Transactional
+    @DELETE
+    @Path("/{id}")
+    public Response delete(@PathParam("id") UUID id) {
+        Project project = entityManager.find(Project.class, id);
+
+        if (project == null) {
+            throw new NotFoundException("Project not found.");
+        }
+
+        entityManager.remove(project);
+        return Response.noContent().build();
     }
 }
