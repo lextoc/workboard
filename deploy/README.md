@@ -26,11 +26,11 @@ After configuration, commit the delivery files on a feature branch, push the bra
 
 ## What a release does
 
-1. Builds on Java 21, runs the H2 API suite and deployment tests, then exercises the packaged application against PostgreSQL 16, including a restart against the migrated database. Smoke tickets are created only in the disposable CI database and are deleted after each check.
+1. Builds on Java 21, runs the H2 API suite and deployment tests, and runs the frontend browser suite with Node.js 24 and pinned Playwright tooling installed outside the application. It then exercises the packaged application against PostgreSQL 16, including a restart against the migrated database. The disposable API exercise creates an empty project, assigns a ticket, checks deletion conflicts, renames the project, preserves and changes the assignment through ticket updates, and cleans up the ticket before the project, including on failure.
 2. Uploads the full Quarkus fast-jar archive over restricted SSH. The server verifies its SHA-256 checksum, rejects traversal paths, links, special files, duplicate paths and oversized archives, and stages root-owned files outside the active release.
 3. Takes a database backup through the existing `workboard-backup.service`. Backup failure leaves the active release untouched.
 4. Saves release metadata, atomically switches `/opt/workboard/current`, and restarts `workboard.service`. A short interruption is expected.
-5. Waits for local application and database readiness, then verifies authenticated HTTPS access and anonymous rejection through nginx. GitHub repeats external HTTPS, readiness, asset, API-list and anonymous API-method checks. Production smoke checks do not create or change tickets.
+5. Waits for local application and database readiness, then verifies authenticated HTTPS access and anonymous rejection through nginx. GitHub repeats external HTTPS, readiness, asset and API-list checks, including `/picker.js` and `/api/projects`, and anonymous ticket/project method checks. Production smoke checks do not create or change tickets or projects. The privileged server helper retains its existing checks; these expanded checks run from the repository workflow and require no helper reinstallation.
 6. Reports the result in GitHub Actions and the environment deployment history. Release metadata is saved in `/opt/workboard/current/.release.json`.
 
 The normal workflow cannot install new privileged server helpers, alter nginx configuration, or update systemd units. Those changes require administrative installation. Database credentials remain in `/etc/workboard/workboard.env`; they are not sent to GitHub. The SSH host key is pinned from the already trusted administrative connection, not accepted from an unauthenticated key scan during deployment. Official GitHub Actions are pinned by commit; Dependabot proposes weekly action updates.
@@ -62,10 +62,12 @@ python3 -m unittest discover -s deploy/tests -v
 actionlint .github/workflows/delivery.yml
 ```
 
+CI pins Playwright 1.62.1 and installs it under the runner’s temporary directory, then installs Chromium and its Linux dependencies. No frontend runtime dependency is added to the application. Locally, run `node --test src/test/frontend/projects.test.cjs` with Playwright on `NODE_PATH` and, if needed, `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` pointing to an installed Chromium. The browser tests use mocked APIs; the packaged PostgreSQL exercise checks the real HTTP API separately.
+
 For an already started disposable production-profile application backed by PostgreSQL:
 
 ```sh
 python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api
 ```
 
-`--exercise-api` writes a temporary ticket and is intended for a disposable test database. Public production verification uses `--check-auth`, with credentials supplied through `SMOKE_USERNAME` and `SMOKE_PASSWORD`, and performs read-only authenticated checks.
+`--exercise-api` writes a temporary project and ticket and is intended for a disposable test database. It cleans up the ticket first, then attempts project cleanup even if ticket cleanup fails. Cleanup failures fail the check. Public production verification uses `--check-auth`, with credentials supplied through `SMOKE_USERNAME` and `SMOKE_PASSWORD`, and performs read-only authenticated checks.
