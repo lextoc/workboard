@@ -1,12 +1,19 @@
 package be.alexanderclaes.workboard.ticket;
 
-import jakarta.validation.constraints.NotNull;
-
 import java.util.UUID;
 
 public record CreateTicketRequest(
-        @NotNull TicketTitle title,
-        @NotNull TicketStatus status,
+        TicketTitle title,
+        TicketStatus status,
         UUID projectId
 ) {
+    public CreateTicketRequest {
+        if (title == null) {
+            throw new IllegalArgumentException("Title is required.");
+        }
+
+        if (status == null) {
+            throw new IllegalArgumentException("Status is required.");
+        }
+    }
 }

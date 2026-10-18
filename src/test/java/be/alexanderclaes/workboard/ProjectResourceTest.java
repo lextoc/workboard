@@ -1,6 +1,7 @@
 package be.alexanderclaes.workboard;
 
 import be.alexanderclaes.workboard.ticket.Ticket;
+import be.alexanderclaes.workboard.ticket.TicketStatus;
 import io.quarkus.narayana.jta.QuarkusTransaction;
 import io.quarkus.test.junit.QuarkusTest;
 import io.restassured.http.ContentType;
@@ -93,10 +94,10 @@ class ProjectResourceTest {
                     : "Project name cannot be blank.";
             given().contentType(ContentType.JSON).body(request)
                     .when().post("/api/projects")
-                    .then().statusCode(400).body("violations.message", hasItem(message));
+                    .then().statusCode(400).contentType(ContentType.JSON).body("message", equalTo(message));
             given().contentType(ContentType.JSON).body(request)
                     .when().put("/api/projects/{id}", projectId)
-                    .then().statusCode(400).body("violations.message", hasItem(message));
+                    .then().statusCode(400).contentType(ContentType.JSON).body("message", equalTo(message));
             assertEquals(before, projectList());
         }
     }
@@ -107,9 +108,11 @@ class ProjectResourceTest {
         List<Map<String, Object>> before = projectList();
 
         given().contentType(ContentType.JSON).body("null")
-                .when().post("/api/projects").then().statusCode(400);
+                .when().post("/api/projects").then().statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Request body is required."));
         given().contentType(ContentType.JSON).body("null")
-                .when().put("/api/projects/{id}", projectId).then().statusCode(400);
+                .when().put("/api/projects/{id}", projectId).then().statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Request body is required."));
 
         assertEquals(before, projectList());
     }
@@ -232,8 +235,11 @@ class ProjectResourceTest {
         UUID projectId = createProject("Protected " + status);
         UUID ticketId = createTicket(Map.of("title", "Keep assigned ticket", "status", status, "projectId", projectId));
         if (status.equals("DONE")) {
-            QuarkusTransaction.requiringNew().run(() -> entityManager.find(Ticket.class, ticketId)
-                    .setCompletedAt(Instant.now().minus(Duration.ofDays(2))));
+            QuarkusTransaction.requiringNew().run(() -> {
+                Ticket ticket = entityManager.find(Ticket.class, ticketId);
+                ticket.changeState(TicketStatus.TODO, false, null, Instant.now());
+                ticket.changeState(TicketStatus.DONE, false, null, Instant.now().minus(Duration.ofDays(2)));
+            });
             given().when().get("/api/tickets").then().statusCode(200)
                     .body("id", not(hasItem(ticketId.toString())));
         }

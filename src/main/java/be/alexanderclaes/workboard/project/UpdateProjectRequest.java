@@ -1,11 +1,14 @@
 package be.alexanderclaes.workboard.project;
 
-import jakarta.validation.constraints.NotBlank;
-import jakarta.validation.constraints.Size;
+public record UpdateProjectRequest(String name) {
+    public UpdateProjectRequest {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Project name cannot be blank.");
+        }
 
-public record UpdateProjectRequest(
-        @NotBlank(message = "Project name cannot be blank.")
-        @Size(max = 200, message = "Project name cannot exceed 200 characters.")
-        String name
-) {
+        if (name.length() > 200) {
+            throw new IllegalArgumentException(
+                    "Project name cannot exceed 200 characters.");
+        }
+    }
 }

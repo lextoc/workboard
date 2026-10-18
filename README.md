@@ -28,6 +28,8 @@ The frontend formats API constraint violations with field labels and displays JS
 
 The list endpoint filters out DONE tickets whose completion timestamp is older than one day (verified by code inspection). This does not delete them, and the board only reloads the list on page load or manual refresh. Entering DONE sets the completion timestamp, editing a ticket that remains DONE preserves it, and leaving DONE clears it.
 
+Backend domain guarantees and limitations, verified by code inspection: the ticket title setter requires a non-null checked `TicketTitle` before storing its text. The public ticket constructor initializes title and lifecycle state, while the no-argument constructor is protected for persistence. `Ticket.changeState` checks the proposed status/blocking combination before mutation, accepts a checked blocking note, clears notes when unblocking, and records, preserves, or clears completion time according to the transition. The resource supplies the current time. These operations protect ordinary domain callers as well as HTTP requests; they do not repair existing inconsistent database rows. The production migrations enforce nullability, text lengths, allowed status values, and project references, but do not enforce the relationships between blocking, status, and completion time.
+
 ## Stack
 
 - Java 21 and Quarkus 3.40.1
@@ -68,9 +70,11 @@ All endpoints use the `/api/tickets` base path. Request and response bodies use 
 | PUT | `/api/tickets/{id}` | Update a ticket and return it with status 200 |
 | DELETE | `/api/tickets/{id}` | Delete a ticket and return status 204 |
 
-Individual reads, updates, and deletes return 404 when the ticket does not exist. Invalid request values return 400.
+Individual reads, updates, and deletes explicitly return 404 when the ticket does not exist, verified by code inspection. Invalid request values are intended to return 400 through request parsing and API error handling.
 
 Create requests require a nonblank `title` of at most 200 characters and a `status` of `TODO`, `DOING`, or `DONE`:
+
+By code inspection, ticket creation and updates check required fields in request-record constructors and title/note contents in value records. The update request constructor also rejects blocked-with-DONE and blocked-without-note combinations. Project request constructors check nonblank names of at most 200 characters, independently of the entity setter. Ticket and project write endpoints explicitly reject null request bodies and no longer use Jakarta Validation. The request exception mapper includes constructor failures for ticket and project request records in its JSON-message handling; the runtime wrapping and resulting messages have not been verified during this refactor.
 
 ```json
 {
@@ -120,7 +124,9 @@ After ticket writes, the frontend reads `/api/tickets/{id}` to render the canoni
 ./mvnw --batch-mode verify -DargLine=
 ```
 
-The API suite now has 28 tests: the original 16 ticket tests plus 12 project/assignment tests. New coverage includes empty-project listing and ordering, 200-character names, invalid and null requests, renaming an assigned project, missing-project JSON errors, empty-project deletion, protection of open and older DONE assignments, ticket creation with assigned/omitted/null projects, assignment/reassignment/unassignment, and rejected writes leaving stored data unchanged. All 28 API tests passed locally with Java 21 against H2 on 2026-10-18, and Maven verify completed successfully. The existing deletion assertions remain unchanged; the resource now returns its 409 response directly.
+The current backend suite contains 29 API tests (17 ticket tests and 12 project/assignment tests) and eight plain JUnit ticket-domain tests. The request-construction refactor updates API assertions to check JSON `message` errors, adds null ticket-body coverage, and replaces the older-DONE fixture's timestamp setter with domain transitions. Direct entity tests cover valid construction, required construction values, null-title rejection, completion timing, blocking reasons, simultaneous unblocking/completion, and rejected transitions preserving state. These changes have been inspected but not compiled or executed; runtime constructor-error mapping remains unverified.
+
+Before this refactor, all 28 API tests passed locally with Java 21 against H2 on 2026-10-18, and Maven verify completed successfully. That result does not verify the current changes. Existing coverage also includes project listing and ordering, maximum name lengths, invalid and null project requests, renaming assigned projects, missing-project errors, deletion protection for open and older DONE assignments, ticket assignment/reassignment/unassignment, and rejected writes preserving stored data.
 
 Frontend browser checks are separate from Maven and use Node.js with an externally available Playwright installation and Chromium. No frontend package dependencies are added to the application. With Playwright available to Node:
 
