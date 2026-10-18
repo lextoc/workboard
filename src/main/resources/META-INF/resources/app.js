@@ -21,10 +21,57 @@ const savedTickets = new Map();
 const pendingTickets = new Set();
 const editingTickets = new Set();
 const savedProjects = new Map();
+const dropdownStorageKey = 'workboard.dropdowns.v1';
+const dropdownPreferences = readDropdownPreferences();
+let dropdownsRestored = false;
 let refreshing = false;
 let pendingCreates = 0;
 let projectCatalogReady = false;
 let pendingProject = false;
+
+function readDropdownPreferences() {
+    try {
+        const saved = JSON.parse(localStorage.getItem(dropdownStorageKey));
+        if (!saved || typeof saved !== 'object' || Array.isArray(saved)) return {};
+        return {
+            filter: typeof saved.filter === 'string' ? saved.filter : 'all',
+            managed: typeof saved.managed === 'string' ? saved.managed : '',
+            create: Object.fromEntries(statuses.flatMap(status =>
+                typeof saved.create?.[status] === 'string' ? [[status, saved.create[status]]] : []))
+        };
+    } catch {
+        return {};
+    }
+}
+
+function persistDropdownPreferences() {
+    dropdownPreferences.filter = projectFilter.value;
+    if (projectCatalogReady && dropdownsRestored) {
+        dropdownPreferences.managed = managedProject.value;
+        dropdownPreferences.create = Object.fromEntries([...document.querySelectorAll('.create-project')]
+            .map(picker => [picker.closest('.column').dataset.status, picker.value]));
+    }
+    try {
+        localStorage.setItem(dropdownStorageKey, JSON.stringify(dropdownPreferences));
+    } catch {}
+}
+
+function restoreDropdownPreferences() {
+    if (!dropdownsRestored) {
+        const filter = dropdownPreferences.filter ?? 'all';
+        projectFilter.value = projectFilter.options.some(option => option.value === filter) ? filter : 'all';
+        const defaultProject = ['all', 'unassigned'].includes(projectFilter.value) ? '' : projectFilter.value;
+        document.querySelectorAll('.create-project').forEach(picker => {
+            const status = picker.closest('.column').dataset.status;
+            populateProjectSelect(picker, dropdownPreferences.create?.[status] ?? defaultProject);
+        });
+        populateProjectSelect(managedProject, dropdownPreferences.managed ?? '', 'New project');
+        updateProjectForm();
+        dropdownsRestored = projectCatalogReady;
+        applyProjectFilter();
+    }
+    if (projectCatalogReady) persistDropdownPreferences();
+}
 
 function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -683,6 +730,7 @@ async function loadTickets() {
         updateProjectFilter();
         applyProjectFilter();
         syncProjectControls();
+        restoreDropdownPreferences();
         showFeedback('Tickets refreshed.');
         return projectCatalogReady;
     } catch (error) {
@@ -714,6 +762,7 @@ document.querySelectorAll('.create-form').forEach(form => {
     projectLabel.htmlFor = projectSelect.id;
     populateProjectSelect(projectSelect, null);
     form.querySelector('.create-controls').after(projectLabel, projectSelect);
+    projectSelect.addEventListener('change', persistDropdownPreferences);
     submit.prepend(icon('plus'));
     input.addEventListener('input', () => {
         errorMessage.hidden = true;
@@ -810,6 +859,7 @@ projectFilter.addEventListener('change', () => {
     document.querySelectorAll('.create-project').forEach(select => {
         select.value = ['all', 'unassigned'].includes(projectFilter.value) ? '' : projectFilter.value;
     });
+    persistDropdownPreferences();
 });
 
 manageProjectsButton.addEventListener('click', () => {
@@ -832,6 +882,7 @@ projectDialog.addEventListener('cancel', event => {
 managedProject.addEventListener('change', () => {
     projectFeedback.textContent = '';
     updateProjectForm();
+    persistDropdownPreferences();
     projectNameInput.focus();
 });
 
@@ -850,6 +901,7 @@ async function mutateProject(action, successMessage) {
         if (projectCatalogReady && project?.id && savedProjects.has(String(project.id))) {
             managedProject.value = String(project.id);
             updateProjectForm();
+            persistDropdownPreferences();
         }
         projectFeedback.textContent = refreshed ? successMessage : `${successMessage} Refresh failed. Refresh the board before making another change.`;
         projectFeedback.classList.toggle('error', !refreshed);

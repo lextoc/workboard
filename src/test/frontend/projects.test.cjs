@@ -40,6 +40,13 @@ async function workspace(t, options = {}) {
     const context = await browser.newContext(options.context);
     const page = await context.newPage();
     page.setDefaultTimeout(5000);
+    if (options.storageUnavailable) {
+        await page.addInitScript(() => {
+            Object.defineProperty(window, 'localStorage', {
+                get() { throw new DOMException('Storage unavailable', 'SecurityError'); }
+            });
+        });
+    }
     t.after(() => context.close());
     const errors = [];
     page.on('pageerror', error => errors.push(error.message));
@@ -67,7 +74,7 @@ async function workspace(t, options = {}) {
         if (method !== 'GET') state.writes.push({ resource, id, method, data });
         const reply = (body, status = 200) => route.fulfill({ status, json: body });
         if (resource === 'projects') {
-            if (options.projectsUnavailable) return reply({ message: 'Not found' }, 404);
+            if (options.projectsUnavailable || state.projectsUnavailable) return reply({ message: 'Not found' }, 404);
             if (method === 'GET') return reply(state.projects);
             if (method === 'POST' || method === 'PUT') {
                 if (!data.name.trim()) return reply({ message: 'Project name cannot be blank.' }, 400);
@@ -515,4 +522,86 @@ test('deletes empty projects with confirmation, handles failures, and protects a
     await expect(page.locator('#project-filter')).toHaveJSProperty('value', 'all');
     await expect(page.locator('#project-filter .picker-option[data-value="' + otherProjectId + '"]')).toHaveCount(0);
     assert.equal(state.projects.some(project => project.id === otherProjectId), false);
+});
+
+test('remembers dropdown selections independently across reloads and resets them deliberately', async t => {
+    const { page } = await workspace(t);
+    await choose(page.locator('#project-filter'), projectId);
+    await choose(page.locator('[data-status="TODO"] .create-project'), otherProjectId);
+    await choose(page.locator('[data-status="DOING"] .create-project'), '');
+    await page.locator('#manage-projects').click();
+    await choose(page.locator('#managed-project'), otherProjectId);
+    await page.locator('#close-projects').click();
+    await page.reload();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', projectId);
+    await expect(page.locator('[data-status="TODO"] .create-project')).toHaveJSProperty('value', otherProjectId);
+    await expect(page.locator('[data-status="DOING"] .create-project')).toHaveJSProperty('value', '');
+    await expect(page.locator('[data-status="DONE"] .create-project')).toHaveJSProperty('value', projectId);
+    await page.locator('#manage-projects').click();
+    await expect(page.locator('#managed-project')).toHaveJSProperty('value', otherProjectId);
+    await expect(page.locator('#project-name')).toHaveValue('Another project');
+    await page.locator('#close-projects').click();
+    await page.locator('#clear-filters').click();
+    await page.reload();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', 'all');
+    for (const status of ['TODO', 'DOING', 'DONE']) {
+        await expect(page.locator(`[data-status="${status}"] .create-project`)).toHaveJSProperty('value', '');
+    }
+});
+
+test('drops deleted project preferences and keeps ticket assignments authoritative', async t => {
+    const { page, state } = await workspace(t);
+    await page.evaluate(({ project, other, ticket }) => {
+        localStorage.setItem('workboard.dropdowns.v1', JSON.stringify({
+            filter: other, managed: other,
+            create: { TODO: other, DOING: project, DONE: '' },
+            tickets: { [ticket]: other }
+        }));
+    }, { project: projectId, other: otherProjectId, ticket: assignedId });
+    state.projects = state.projects.filter(project => project.id !== otherProjectId);
+    await page.reload();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', 'all');
+    await expect(page.locator('#managed-project')).toHaveJSProperty('value', '');
+    await expect(page.locator('[data-status="TODO"] .create-project')).toHaveJSProperty('value', '');
+    await expect(page.locator('[data-status="DOING"] .create-project')).toHaveJSProperty('value', projectId);
+    await expect(page.locator(`[data-ticket-id="${assignedId}"] .ticket-project-select`)).toHaveJSProperty('value', projectId);
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('workboard.dropdowns.v1')));
+    assert.equal(stored.filter, 'all');
+    assert.equal(stored.managed, '');
+    assert.equal(stored.create.TODO, '');
+});
+
+test('preserves dropdown preferences through a temporary project catalog failure', async t => {
+    const { page, state } = await workspace(t);
+    await choose(page.locator('#project-filter'), otherProjectId);
+    await choose(page.locator('[data-status="DOING"] .create-project'), projectId);
+    const before = await page.evaluate(() => localStorage.getItem('workboard.dropdowns.v1'));
+    state.projectsUnavailable = true;
+    await page.reload();
+    await expect(page.locator('#project-notice')).toBeVisible();
+    assert.equal(await page.evaluate(() => localStorage.getItem('workboard.dropdowns.v1')), before);
+    state.projectsUnavailable = false;
+    await page.locator('#refresh').click();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', otherProjectId);
+    await expect(page.locator('[data-status="DOING"] .create-project')).toHaveJSProperty('value', projectId);
+});
+
+test('recovers from malformed dropdown preferences and works when storage is blocked', async t => {
+    const { page } = await workspace(t);
+    await page.evaluate(() => localStorage.setItem('workboard.dropdowns.v1', '{invalid'));
+    await page.reload();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await choose(page.locator('#project-filter'), projectId);
+    await page.reload();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', projectId);
+    const unavailable = await workspace(t, { storageUnavailable: true });
+    await choose(unavailable.page.locator('#project-filter'), projectId);
+    await expect(unavailable.page.locator('.ticket:visible')).toHaveCount(1);
+    await choose(unavailable.page.locator('[data-status="TODO"] .create-project'), otherProjectId);
+    await expect(unavailable.page.locator('[data-status="TODO"] .create-project')).toHaveJSProperty('value', otherProjectId);
 });
