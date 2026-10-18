@@ -22,6 +22,14 @@ public class Project {
     }
 
     public void setName(String name) {
+        if (name == null || name.isBlank()) {
+            throw new IllegalArgumentException("Project name cannot be blank.");
+        }
+
+        if (name.length() > 200) {
+            throw new IllegalArgumentException("Project name cannot exceed 200 characters.");
+        }
+
         this.name = name;
     }
 }
