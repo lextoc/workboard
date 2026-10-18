@@ -1,6 +1,6 @@
 # Workboard
 
-A learning project for a ticket board with TODO, DOING, and DONE columns. The owner builds the application; agents act as coaches and reviewers under the agreement in [AGENTS.md](AGENTS.md).
+A learning project for a ticket board with TODO, DOING, and DONE columns. The owner builds the backend with agents as coaches and reviewers, and delegates frontend implementation to AI under the agreement in [AGENTS.md](AGENTS.md).
 
 ## Current features
 
@@ -11,6 +11,8 @@ A learning project for a ticket board with TODO, DOING, and DONE columns. The ow
 - Refresh the board manually to load the current server state.
 - Light and dark themes follow the system appearance automatically through CSS, including changes while the page is open; there is no theme toggle or saved override.
 - Persist tickets through a JSON REST API, with UUID identifiers.
+- Show project names on ticket cards and filter the board by all projects, a specific project, or unassigned tickets. Column counts reflect the current filter.
+- The frontend includes project creation, renaming, deletion, and ticket assignment controls for the API contract below. These controls are not yet usable with the current backend: project endpoints are missing and ticket writes ignore assignments. When the project list cannot be loaded, management and assignment controls are disabled while existing assignments remain visible and filterable.
 
 Blocking is a separate flag, not a column. The API rejects blocked tickets in DONE. Unblocking clears the stored reason.
 
@@ -84,7 +86,24 @@ New tickets start unblocked with no blocking reason. Update requests require `ti
 
 `blockedNote` is limited to 1000 characters and must contain nonblank text when `blocked` is true. Requests combining `blocked: true` with `status: "DONE"` are rejected. The API allows unblocking and completing a ticket in one update by setting `blocked: false` and `status: "DONE"`. When `blocked` is false, the stored note is cleared.
 
-Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and `completedAt`.
+Ticket GET responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, `completedAt`, `projectId`, and `projectName`. Both project fields are null for unassigned tickets. POST and PUT still return ticket entities rather than the GET response DTO. Their request DTOs accept a nullable `projectId`, but the resource does not yet apply it.
+
+## Project frontend API contract
+
+The frontend is prepared for the following backend endpoints. They are planned contracts, not currently implemented project endpoints.
+
+| Method | Path | Expected behavior |
+| --- | --- | --- |
+| GET | `/api/projects` | Return an array of `{ "id": "UUID", "name": "Project name" }`, including projects without tickets |
+| POST | `/api/projects` | Create a project from `{ "name": "Project name" }` |
+| PUT | `/api/projects/{id}` | Rename a project using `{ "name": "Project name" }` |
+| DELETE | `/api/projects/{id}` | Delete an unassigned project; reject deletion if any tickets still reference it |
+
+Project mutations accept successful 2xx responses, followed by a reload of the project catalog and tickets. Errors appear in the project dialog; names are sent unchanged for server-side validation. The backend must enforce project-name validation and reject deletion of assigned projects, including tickets omitted from the board's completion window.
+
+Ticket POST and PUT requests include `projectId` as a UUID string or null. Null means unassigned. Every title, status, blocking, or assignment update sends the current project identifier unless the user explicitly changes it. Choosing a project filter also selects that project in the ticket creation forms; choosing All projects or Unassigned defaults new tickets to no project. Each creation form can override this selection.
+
+After ticket writes, the frontend reads `/api/tickets/{id}` to render the canonical GET response and verify the saved assignment. If the backend ignores the requested assignment, the UI reports the mismatch rather than showing an optimistic project label. A ticket moved outside the selected project view is hidden and announced. Project management and assignment require a successful project-catalog load; Refresh board retries a failed catalog request.
 
 ## Build and test
 
@@ -93,7 +112,17 @@ Ticket responses contain `id`, `title`, `status`, `blocked`, `blockedNote`, and 
 ./mvnw --batch-mode verify -DargLine=
 ```
 
-The API test suite covers creation, validation, listing order, blocking, unblocking, updates, and missing-ticket updates.
+The API test suite covers creation, validation, listing order, blocking, unblocking, updates, missing-ticket updates, and project fields on both ticket GET endpoints for assigned and unassigned tickets. All 16 API tests passed locally with Java 21 against H2 on 2026-10-18; this does not verify the Flyway upgrade against PostgreSQL.
+
+Frontend browser checks are separate from Maven and use Node.js with an externally available Playwright installation and Chromium. No frontend package dependencies are added to the application. With Playwright available to Node:
+
+```sh
+node --test src/test/frontend/projects.test.cjs
+```
+
+If Playwright is installed elsewhere, set `NODE_PATH` to its containing `node_modules` directory. Set `PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH` to use an existing Chromium executable, or use Playwright's installed default browser. Optional `WORKBOARD_SCREENSHOT_DIR` captures desktop and mobile screenshots.
+
+All eight frontend browser tests passed on 2026-10-18 using an isolated local static server and mocked API responses. They cover project filtering and visible counts, ticket creation and assignment preservation through title and status changes, assignment and unassignment, project creation/rename/delete and deletion conflicts, missing project APIs, ignored assignments, failed updates with retries, and mobile light/dark layouts. Desktop and mobile screenshots were visually inspected. These checks do not establish end-to-end project functionality against the current backend.
 
 Deployment tooling tests run with `python3 -m unittest discover -s deploy/tests -v`. The GitHub Delivery workflow also starts the packaged application against a disposable PostgreSQL 16 database, checks Flyway startup and API operations, and repeats the smoke checks after restarting the application against the same database. These packaged checks are explicit workflow steps; Maven Failsafe integration tests remain disabled by default.
 

@@ -13,11 +13,20 @@
     <header>
         <div>
             <h1>Workboard</h1>
-            <p>Add tickets below. Move them as work progresses.</p>
+            <p>A clear view of your work, across every project.</p>
         </div>
-        <button id="refresh" type="button">Refresh tickets</button>
+        <button id="refresh" type="button">Refresh board</button>
     </header>
     <p id="feedback" role="status" aria-live="polite">Loading tickets…</p>
+    <section class="project-toolbar" aria-label="Project workspace">
+        <div class="project-filter-field">
+            <label for="project-filter">View project</label>
+            <select id="project-filter"><option value="all">All projects</option><option value="unassigned">Unassigned</option></select>
+        </div>
+        <p id="project-summary" class="hint" aria-live="polite">All tickets, in one place.</p>
+        <button id="manage-projects" type="button" class="secondary">Manage projects</button>
+        <p id="project-notice" class="hint project-notice" role="status" hidden></p>
+    </section>
     <div class="board">
         <section class="column" data-status="TODO" aria-labelledby="todo-heading">
             <h2 id="todo-heading">TODO <span class="count">0</span></h2>
@@ -61,6 +70,24 @@
     </div>
     <p class="hint">Drag a card to move it, or click it to edit its title. Enter adds a line; Ctrl/⌘ + Enter saves; Esc cancels. Hover over ⋯ briefly or click it for ticket actions, including moving and blocking.</p>
 </main>
-
+<dialog id="project-dialog" aria-labelledby="project-dialog-title">
+    <div class="dialog-heading">
+        <h2 id="project-dialog-title">Projects</h2>
+        <button id="close-projects" class="quiet" type="button" aria-label="Close project management">Close</button>
+    </div>
+    <p class="hint">Create a project to group your tickets, or choose an existing project to rename or delete it.</p>
+    <label for="managed-project">Project</label>
+    <select id="managed-project"><option value="">New project</option></select>
+    <form id="project-form" novalidate>
+        <label for="project-name">Project name</label>
+        <input id="project-name" name="name" type="text" autocomplete="off">
+        <div class="project-actions">
+            <button id="save-project" type="submit">Create project</button>
+            <button id="delete-project" class="quiet danger" type="button" hidden>Delete project</button>
+        </div>
+    </form>
+    <p class="hint">A project with assigned tickets cannot be deleted. Reassign or unassign its tickets first.</p>
+    <p id="project-feedback" class="project-feedback" role="status" aria-live="polite"></p>
+</dialog>
 </body>
 </html>

@@ -1,12 +1,26 @@
 const feedback = document.querySelector('#feedback');
 const refreshButton = document.querySelector('#refresh');
+const projectFilter = document.querySelector('#project-filter');
+const projectSummary = document.querySelector('#project-summary');
+const manageProjectsButton = document.querySelector('#manage-projects');
+const projectNotice = document.querySelector('#project-notice');
+const projectDialog = document.querySelector('#project-dialog');
+const managedProject = document.querySelector('#managed-project');
+const projectForm = document.querySelector('#project-form');
+const projectNameInput = document.querySelector('#project-name');
+const projectFeedback = document.querySelector('#project-feedback');
+const saveProjectButton = document.querySelector('#save-project');
+const deleteProjectButton = document.querySelector('#delete-project');
 const statuses = ['TODO', 'DOING', 'DONE'];
 const savedTickets = new Map();
 const pendingTickets = new Set();
 const editingTickets = new Set();
+const savedProjects = new Map();
 let draggedTicketId = null;
 let refreshing = false;
 let pendingCreates = 0;
+let projectCatalogReady = false;
+let pendingProject = false;
 
 function element(tag, className, text) {
     const node = document.createElement(tag);
@@ -65,7 +79,9 @@ function apiErrorMessage(response, data, body) {
         title: 'Title',
         status: 'Status',
         blocked: 'Blocked',
-        blockedNote: 'Blocking reason'
+        blockedNote: 'Blocking reason',
+        projectId: 'Project',
+        name: 'Project name'
     };
     const violations = Array.isArray(data?.violations)
         ? data.violations.flatMap(item => {
@@ -89,16 +105,16 @@ function apiErrorMessage(response, data, body) {
         : response.status === 400 || response.status === 422
             ? 'The server rejected the submitted values without an explanation. The API must return a validation message.'
             : response.status === 404
-                ? 'This ticket could not be found. Refresh the board and try again.'
+                ? 'This item could not be found. Refresh the board and try again.'
                 : 'The server rejected the request without an explanation.';
     return `HTTP ${response.status}: ${(detail || plainText || fallback).slice(0, 1500)}`;
 }
 
-async function api(path = '', options = {}) {
+async function api(path = '', options = {}, resource = 'tickets') {
     let response;
     let body;
     try {
-        response = await fetch(`/api/tickets${path}`, {
+        response = await fetch(`/api/${resource}${path}`, {
             ...options,
             headers: { 'Accept': 'application/json', ...options.headers }
         });
@@ -126,7 +142,107 @@ function cardFor(id) {
 }
 
 function updateRefresh() {
-    refreshButton.disabled = refreshing || pendingTickets.size > 0 || pendingCreates > 0;
+    const busy = refreshing || pendingTickets.size > 0 || pendingCreates > 0 || pendingProject;
+    refreshButton.disabled = busy;
+    projectFilter.disabled = busy || editingTickets.size > 0;
+    manageProjectsButton.disabled = busy || editingTickets.size > 0;
+}
+
+function normalizeTicket(ticket) {
+    return {
+        ...ticket,
+        projectId: ticket.projectId ?? ticket.project?.id ?? null,
+        projectName: ticket.projectName ?? ticket.project?.name ?? null
+    };
+}
+
+function knownProjects() {
+    const projects = new Map(savedProjects);
+    for (const ticket of savedTickets.values()) {
+        if (ticket.projectId && !projects.has(String(ticket.projectId))) {
+            projects.set(String(ticket.projectId), { id: String(ticket.projectId), name: ticket.projectName ?? 'Unnamed project' });
+        }
+    }
+    return [...projects.values()].sort((a, b) => a.name.localeCompare(b.name));
+}
+
+function projectOption(value, label) {
+    const option = element('option', '', label);
+    option.value = value;
+    return option;
+}
+
+function matchesProject(ticket) {
+    return projectFilter.value === 'all'
+        || (projectFilter.value === 'unassigned' ? !ticket.projectId : String(ticket.projectId) === projectFilter.value);
+}
+
+function updateProjectFilter() {
+    const selected = projectFilter.value;
+    projectFilter.replaceChildren(projectOption('all', 'All projects'), projectOption('unassigned', 'Unassigned'));
+    for (const project of knownProjects()) projectFilter.append(projectOption(project.id, project.name));
+    projectFilter.value = [...projectFilter.options].some(option => option.value === selected) ? selected : 'all';
+}
+
+function applyProjectFilter() {
+    for (const ticket of savedTickets.values()) {
+        const card = cardFor(ticket.id);
+        if (card) card.hidden = !matchesProject(ticket);
+    }
+    const count = [...savedTickets.values()].filter(matchesProject).length;
+    projectSummary.textContent = `${count} ${count === 1 ? 'ticket' : 'tickets'} · ${projectFilter.selectedOptions[0].textContent}`;
+    updateColumns();
+}
+
+function populateProjectSelect(select, selected, emptyLabel = 'Unassigned') {
+    select.replaceChildren(projectOption('', emptyLabel));
+    for (const project of knownProjects()) select.append(projectOption(project.id, project.name));
+    select.value = selected ?? '';
+    if (select.selectedIndex < 0) select.value = '';
+    select.disabled = !projectCatalogReady;
+}
+
+function syncProjectControls() {
+    document.querySelectorAll('.create-project').forEach(select => {
+        populateProjectSelect(select, select.value);
+    });
+    document.querySelectorAll('.ticket-project-select').forEach(select => {
+        const ticket = savedTickets.get(select.dataset.projectTicketId);
+        populateProjectSelect(select, ticket?.projectId);
+    });
+    populateProjectSelect(managedProject, managedProject.value, 'New project');
+    updateProjectForm();
+}
+
+function updateProjectForm() {
+    const project = savedProjects.get(managedProject.value);
+    projectNameInput.value = project?.name ?? '';
+    saveProjectButton.textContent = project ? 'Save name' : 'Create project';
+    deleteProjectButton.hidden = !project;
+    projectForm.querySelectorAll('input, button').forEach(control => {
+        control.disabled = pendingProject || !projectCatalogReady;
+    });
+    managedProject.disabled = pendingProject || !projectCatalogReady;
+}
+
+async function loadProjects() {
+    try {
+        const projects = await api('', {}, 'projects');
+        if (!Array.isArray(projects) || projects.some(project => !project?.id || typeof project.name !== 'string')) {
+            throw new Error('Expected a project list from the server.');
+        }
+        savedProjects.clear();
+        projects.forEach(project => savedProjects.set(String(project.id), project));
+        projectCatalogReady = true;
+        projectNotice.hidden = true;
+    } catch (error) {
+        projectCatalogReady = false;
+        projectNotice.textContent = 'Project management and assignment are unavailable. You can still view and filter existing assignments. Refresh the board to retry.';
+        projectNotice.hidden = false;
+        projectFeedback.textContent = error.message;
+        projectFeedback.classList.add('error');
+    }
+    syncProjectControls();
 }
 
 function updateColumns() {
@@ -138,7 +254,7 @@ function updateColumns() {
     for (const status of statuses) {
         const column = document.querySelector(`[data-status="${status}"]`);
         const cards = column.querySelector('.cards');
-        const count = cards.querySelectorAll('.ticket').length;
+        const count = cards.querySelectorAll('.ticket:not([hidden])').length;
         column.querySelector('.count').textContent = count;
         cards.querySelector('.empty')?.remove();
         if (!count) cards.append(element('p', 'empty', emptyMessages[status]));
@@ -146,6 +262,7 @@ function updateColumns() {
 }
 
 function placeTicket(ticket, focusTarget) {
+    ticket = normalizeTicket(ticket);
     const id = String(ticket.id);
     savedTickets.set(id, ticket);
     const oldCard = cardFor(id);
@@ -159,7 +276,8 @@ function placeTicket(ticket, focusTarget) {
             .find(item => item.dataset.ticketId > id);
         cards.insertBefore(card, next ?? null);
     }
-    updateColumns();
+    updateProjectFilter();
+    applyProjectFilter();
     if (focusTarget) card.querySelector(focusTarget)?.focus();
 }
 
@@ -168,7 +286,7 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
     if (refreshing || pendingTickets.has(id)) return;
     const card = cardFor(id);
     const focused = document.activeElement;
-    const controls = [...card.querySelectorAll('button, input, textarea')];
+    const controls = [...card.querySelectorAll('button, input, textarea, select')];
     const disabled = controls.map(control => control.disabled);
     pendingTickets.add(id);
     updateRefresh();
@@ -184,8 +302,13 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
         await action();
         saved = true;
     } catch (error) {
-        message.textContent = error.message;
-        message.classList.add('error');
+        const currentMessage = cardFor(id)?.querySelector('.ticket-feedback') ?? message;
+        currentMessage.textContent = error.message;
+        currentMessage.classList.remove('sr-only');
+        currentMessage.classList.add('error');
+        const projectSelect = cardFor(id)?.querySelector('.ticket-project-select');
+        if (projectSelect) projectSelect.value = savedTickets.get(id)?.projectId ?? '';
+        if (cardFor(id)?.hidden) showFeedback(error.message, true);
     } finally {
         pendingTickets.delete(id);
         updateRefresh();
@@ -194,7 +317,9 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
             card.draggable = !editingTickets.has(id);
             controls.forEach((control, index) => { control.disabled = disabled[index]; });
         }
-        if (document.activeElement === document.body || card.contains(document.activeElement)) {
+        if (cardFor(id)?.hidden) {
+            projectFilter.focus();
+        } else if (document.activeElement === document.body || card.contains(document.activeElement)) {
             if (saved) cardFor(id)?.querySelector(focusTarget)?.focus();
             else if (focused?.isConnected) {
                 const target = focused.closest('[hidden]') ? card.querySelector('.ticket-menu-trigger') : focused;
@@ -206,7 +331,7 @@ async function runCard(id, action, focusTarget = '.ticket-title') {
 
 async function saveTicket(id, changes) {
     const current = savedTickets.get(String(id));
-    const ticket = await api(`/${id}`, {
+    await api(`/${id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -214,14 +339,23 @@ async function saveTicket(id, changes) {
             status: current.status,
             blocked: current.blocked,
             blockedNote: current.blockedNote,
+            projectId: current.projectId,
             ...changes
         })
     });
+    const ticket = normalizeTicket(await api(`/${id}`));
     editingTickets.delete(String(id));
     placeTicket(ticket);
     const message = cardFor(id).querySelector('.ticket-feedback');
     message.classList.add('sr-only');
     message.textContent = 'Saved';
+    const expectedProjectId = Object.hasOwn(changes, 'projectId') ? changes.projectId : current.projectId;
+    if (ticket.projectId !== expectedProjectId) {
+        throw new Error('The ticket was saved, but its project assignment was not applied. Refresh the board before trying again.');
+    }
+    if (!matchesProject(ticket)) {
+        showFeedback('Ticket saved. It is now outside the selected project view.');
+    }
 }
 
 function clearDrag() {
@@ -247,6 +381,7 @@ function openInlineEditor(id, mode) {
     const ticket = savedTickets.get(id);
     const card = cardFor(id);
     editingTickets.add(id);
+    updateRefresh();
     card.classList.add('editing');
     card.draggable = false;
     closeTicketMenus();
@@ -273,6 +408,7 @@ function openInlineEditor(id, mode) {
     const cancelEdit = () => {
         if (pendingTickets.has(id)) return;
         editingTickets.delete(id);
+        updateRefresh();
         placeTicket(savedTickets.get(id), mode === 'title' ? '.ticket-title' : '.ticket-menu-trigger');
     };
     cancel.addEventListener('click', cancelEdit);
@@ -345,6 +481,19 @@ function ticketCard(ticket) {
     panel.hidden = true;
     panel.append(element('p', 'ticket-reference', `#${id.slice(0, 8)}`));
     panel.querySelector('.ticket-reference').title = id;
+    const projectField = element('div', 'ticket-project-field');
+    const projectLabel = element('label', '', 'Project');
+    const projectSelect = element('select', 'ticket-project-select');
+    projectSelect.id = `project-${id}`;
+    projectSelect.dataset.projectTicketId = id;
+    projectLabel.htmlFor = projectSelect.id;
+    populateProjectSelect(projectSelect, ticket.projectId);
+    projectSelect.addEventListener('change', () => {
+        const projectId = projectSelect.value || null;
+        runCard(id, () => saveTicket(id, { projectId }), '.ticket-menu-trigger');
+    });
+    projectField.append(projectLabel, projectSelect);
+    panel.append(projectField);
     let hoverTimer;
     let leaveTimer;
     trigger.addEventListener('close-ticket-menu', () => {
@@ -399,7 +548,7 @@ function ticketCard(ticket) {
         } else if (event.key === 'ArrowDown' && event.target === trigger) {
             event.preventDefault();
             openMenu();
-            panel.querySelector('button')?.focus();
+            panel.querySelector('button, select')?.focus();
         }
     });
     const handle = actionButton('Drag to move', 'grip', 'quiet drag-handle', `Move ticket ${id}. Drag or use Left and Right arrow keys.`);
@@ -439,7 +588,8 @@ function ticketCard(ticket) {
             await api(`/${id}`, { method: 'DELETE' });
             savedTickets.delete(id);
             card.remove();
-            updateColumns();
+            updateProjectFilter();
+            applyProjectFilter();
             showFeedback(`Deleted ticket #${id.slice(0, 8)}.`);
             if (document.activeElement === document.body) {
                 document.querySelector(`[data-status="${ticket.status}"] .create-form input`).focus();
@@ -475,16 +625,20 @@ function ticketCard(ticket) {
     const message = element('p', 'ticket-feedback');
     message.setAttribute('role', 'status');
     message.setAttribute('aria-live', 'polite');
-    card.append(header, blocker, message);
+    const projectBadge = element('p', `project-badge${ticket.projectId ? '' : ' unassigned'}`,
+        ticket.projectId ? ticket.projectName ?? 'Unnamed project' : 'Unassigned');
+    projectBadge.title = ticket.projectName ?? 'No project assigned';
+    card.append(header, projectBadge, blocker, message);
     return card;
 }
 
 async function loadTickets() {
-    if (refreshing || pendingTickets.size || pendingCreates) return;
+    if (refreshing || pendingTickets.size || pendingCreates || pendingProject) return;
     const focused = document.activeElement;
     refreshing = true;
     updateRefresh();
     try {
+        await loadProjects();
         const tickets = await api();
         if (!Array.isArray(tickets)) throw new Error('Expected a ticket list from the server.');
         const received = new Set(tickets.map(ticket => String(ticket.id)));
@@ -494,11 +648,14 @@ async function loadTickets() {
                 cardFor(id)?.remove();
             }
         }
-        for (const ticket of tickets) {
+        for (const rawTicket of tickets) {
+            const ticket = normalizeTicket(rawTicket);
             if (editingTickets.has(String(ticket.id))) savedTickets.set(String(ticket.id), ticket);
             else placeTicket(ticket);
         }
-        updateColumns();
+        updateProjectFilter();
+        applyProjectFilter();
+        syncProjectControls();
         showFeedback('Tickets refreshed.');
     } catch (error) {
         showFeedback(error.message, true);
@@ -541,6 +698,13 @@ document.querySelectorAll('.create-form').forEach(form => {
     const input = form.elements.title;
     const errorMessage = form.querySelector('.create-error');
     const submit = form.querySelector('button[type="submit"]');
+    const projectLabel = element('label', 'create-project-label', 'Project');
+    const projectSelect = element('select', 'create-project');
+    projectSelect.id = `${input.id}-project`;
+    projectSelect.name = 'projectId';
+    projectLabel.htmlFor = projectSelect.id;
+    populateProjectSelect(projectSelect, null);
+    form.querySelector('.create-controls').after(projectLabel, projectSelect);
     submit.prepend(icon('plus'));
     input.addEventListener('input', () => {
         errorMessage.hidden = true;
@@ -550,20 +714,26 @@ document.querySelectorAll('.create-form').forEach(form => {
         if (refreshing || form.getAttribute('aria-busy') === 'true') return;
         const title = input.value;
         const status = form.closest('.column').dataset.status;
+        const projectId = projectSelect.value || null;
         errorMessage.hidden = true;
         form.setAttribute('aria-busy', 'true');
         input.disabled = true;
         submit.disabled = true;
+        projectSelect.disabled = true;
         pendingCreates++;
         updateRefresh();
         try {
-            const ticket = await api('', {
+            const created = await api('', {
                 method: 'POST', headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ title, status })
+                body: JSON.stringify({ title, status, projectId })
             });
-            placeTicket(ticket);
             input.value = '';
-            showFeedback(`Ticket created in ${status}.`);
+            const ticket = normalizeTicket(await api(`/${created.id}`));
+            placeTicket(ticket);
+            if (ticket.projectId !== projectId) {
+                throw new Error('The ticket was created, but its project assignment was not applied. Refresh the board before trying again.');
+            }
+            showFeedback(`Ticket created in ${status}.${matchesProject(ticket) ? '' : ' It is outside the selected project view.'}`);
         } catch (error) {
             errorMessage.hidden = false;
             errorMessage.textContent = error.message;
@@ -572,6 +742,7 @@ document.querySelectorAll('.create-form').forEach(form => {
             form.removeAttribute('aria-busy');
             input.disabled = false;
             submit.disabled = false;
+            projectSelect.disabled = !projectCatalogReady;
             updateRefresh();
             if (document.activeElement === document.body || document.activeElement === input || document.activeElement === submit) input.focus();
         }
@@ -579,4 +750,87 @@ document.querySelectorAll('.create-form').forEach(form => {
 });
 
 refreshButton.addEventListener('click', loadTickets);
+projectFilter.addEventListener('change', () => {
+    closeTicketMenus();
+    applyProjectFilter();
+    document.querySelectorAll('.create-project').forEach(select => {
+        select.value = ['all', 'unassigned'].includes(projectFilter.value) ? '' : projectFilter.value;
+    });
+});
+
+manageProjectsButton.addEventListener('click', () => {
+    closeTicketMenus();
+    projectFeedback.textContent = projectCatalogReady ? '' : 'Project management is unavailable. Close this window and refresh the board to retry.';
+    projectFeedback.classList.toggle('error', !projectCatalogReady);
+    updateProjectForm();
+    projectDialog.showModal();
+    if (projectCatalogReady) projectNameInput.focus();
+});
+
+document.querySelector('#close-projects').addEventListener('click', () => {
+    if (!pendingProject) projectDialog.close();
+});
+
+projectDialog.addEventListener('cancel', event => {
+    if (pendingProject) event.preventDefault();
+});
+
+managedProject.addEventListener('change', () => {
+    projectFeedback.textContent = '';
+    updateProjectForm();
+    projectNameInput.focus();
+});
+
+async function mutateProject(action, successMessage) {
+    if (pendingProject || !projectCatalogReady) return;
+    pendingProject = true;
+    updateRefresh();
+    projectForm.setAttribute('aria-busy', 'true');
+    projectDialog.querySelectorAll('button, input, select').forEach(control => { control.disabled = true; });
+    projectFeedback.classList.remove('error');
+    projectFeedback.textContent = 'Saving…';
+    try {
+        await action();
+        pendingProject = false;
+        await loadTickets();
+        projectFeedback.textContent = successMessage;
+        if (projectCatalogReady) projectNameInput.focus();
+    } catch (error) {
+        projectFeedback.textContent = error.message;
+        projectFeedback.classList.add('error');
+    } finally {
+        pendingProject = false;
+        projectForm.removeAttribute('aria-busy');
+        projectDialog.querySelectorAll('button, input, select').forEach(control => { control.disabled = false; });
+        if (!projectCatalogReady) {
+            projectForm.querySelectorAll('button, input').forEach(control => { control.disabled = true; });
+            managedProject.disabled = true;
+        }
+        updateRefresh();
+    }
+}
+
+projectForm.addEventListener('submit', event => {
+    event.preventDefault();
+    const id = managedProject.value;
+    const name = projectNameInput.value;
+    mutateProject(async () => {
+        await api(id ? `/${encodeURIComponent(id)}` : '', {
+            method: id ? 'PUT' : 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ name })
+        }, 'projects');
+    }, id ? 'Project renamed.' : 'Project created. Choose it when adding or editing a ticket.');
+});
+
+deleteProjectButton.addEventListener('click', () => {
+    const id = managedProject.value;
+    const project = savedProjects.get(id);
+    if (!project || !window.confirm(`Delete project “${project.name}”?`)) return;
+    mutateProject(async () => {
+        await api(`/${encodeURIComponent(id)}`, { method: 'DELETE' }, 'projects');
+        managedProject.value = '';
+    }, 'Project deleted.');
+});
+
 loadTickets();
