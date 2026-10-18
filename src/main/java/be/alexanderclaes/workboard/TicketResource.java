@@ -23,7 +23,7 @@ public class TicketResource {
 
     @GET
     public List<Ticket> getTickets() {
-        Instant cutoff = Instant.now().minus(Duration.ofMinutes(5));
+        Instant cutoff = Instant.now().minus(Duration.ofDays(1));
 
         return entityManager.createQuery(
                         """
