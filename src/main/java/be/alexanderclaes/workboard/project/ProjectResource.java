@@ -93,13 +93,10 @@ public class ProjectResource {
                 .getSingleResult();
 
         if (assignedTickets > 0) {
-            // In the future, we would delete all assigned tickets or set their projectId to null.
-            throw new BadRequestException(
-                    Response.status(Response.Status.CONFLICT)
-                            .type(MediaType.APPLICATION_JSON_TYPE)
-                            .entity(Map.of("message", "Unassign this project's tickets before deleting it."))
-                            .build()
-            );
+            return Response.status(Response.Status.CONFLICT)
+                    .type(MediaType.APPLICATION_JSON_TYPE)
+                    .entity(Map.of("message", "Unassign this project's tickets before deleting it."))
+                    .build();
         }
 
         entityManager.remove(project);
