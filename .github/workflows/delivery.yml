@@ -1,0 +1,128 @@
+name: Delivery
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    name: Build, test and package
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: workboard_ci
+          POSTGRES_USER: workboard_ci
+          POSTGRES_PASSWORD: workboard_ci
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U workboard_ci -d workboard_ci"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@b843ebf9b913146b38da2eaa7aeddf76074ae1ad # v6.1.0
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Check deployment tooling
+        run: python3 -m unittest discover -s deploy/tests -v
+      - name: Build and run API tests
+        run: ./mvnw --batch-mode --no-transfer-progress clean verify -DargLine=
+      - name: Test packaged application with PostgreSQL and Flyway
+        env:
+          DB_JDBC_URL: jdbc:postgresql://localhost:5432/workboard_ci
+          DB_USERNAME: workboard_ci
+          DB_PASSWORD: workboard_ci
+          QUARKUS_HTTP_HOST: 127.0.0.1
+          QUARKUS_HTTP_PORT: '18084'
+        run: |
+          java -jar target/quarkus-app/quarkus-run.jar > target/postgres-smoke.log 2>&1 &
+          app_pid=$!
+          trap 'kill "$app_pid" 2>/dev/null || true' EXIT
+          python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api
+          kill "$app_pid"
+          wait "$app_pid" || true
+          java -jar target/quarkus-app/quarkus-run.jar >> target/postgres-smoke.log 2>&1 &
+          app_pid=$!
+          python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api
+      - name: Show packaged application logs on failure
+        if: failure()
+        run: cat target/postgres-smoke.log 2>/dev/null || true
+      - name: Archive tested application
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        run: tar -czf target/workboard.tar.gz -C target/quarkus-app .
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+        with:
+          name: workboard-${{ github.sha }}
+          path: target/workboard.tar.gz
+          if-no-files-found: error
+          retention-days: 14
+
+  deploy:
+    name: Deploy production
+    needs: verify
+    if: github.ref == 'refs/heads/main' && github.event_name != 'pull_request'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    environment:
+      name: production
+      url: https://workboard.alexanderclaes.be
+    concurrency:
+      group: workboard-production
+      cancel-in-progress: false
+    steps:
+      - name: Refuse an outdated main revision
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          latest=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq .object.sha)
+          if [ "$latest" != "$GITHUB_SHA" ]; then
+            echo 'A newer main revision exists; refusing to deploy an older build.'
+            exit 1
+          fi
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: workboard-${{ github.sha }}
+          path: artifact
+      - name: Deploy tested artifact over restricted SSH
+        env:
+          DEPLOY_HOST: ${{ vars.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ vars.DEPLOY_USER }}
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+        run: |
+          install -d -m 700 "$HOME/.ssh"
+          trap 'rm -f "$HOME/.ssh/workboard" "$HOME/.ssh/workboard_known_hosts"' EXIT
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$HOME/.ssh/workboard"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$HOME/.ssh/workboard_known_hosts"
+          chmod 600 "$HOME/.ssh/workboard" "$HOME/.ssh/workboard_known_hosts"
+          checksum=$(sha256sum artifact/workboard.tar.gz | cut -d ' ' -f 1)
+          release="$GITHUB_SHA-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          ssh -T -i "$HOME/.ssh/workboard" \
+            -o BatchMode=yes -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$HOME/.ssh/workboard_known_hosts" \
+            -o ConnectTimeout=15 -o ServerAliveInterval=15 -o ServerAliveCountMax=4 \
+            "$DEPLOY_USER@$DEPLOY_HOST" "deploy $release $checksum" < artifact/workboard.tar.gz
+          printf 'Deployed `%s` from commit `%s`.\n' "$release" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+      - name: Verify HTTPS and authentication
+        env:
+          SMOKE_USERNAME: ${{ secrets.SMOKE_USERNAME }}
+          SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
+        run: python3 deploy/smoke-test.py https://workboard.alexanderclaes.be --check-auth
