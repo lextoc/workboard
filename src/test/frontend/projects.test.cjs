@@ -16,7 +16,7 @@ let origin;
 
 before(async () => {
     server = http.createServer(async (request, response) => {
-        const files = { '/': 'index.html', '/app.js': 'app.js', '/styles.css': 'styles.css' };
+        const files = { '/': 'index.html', '/app.js': 'app.js', '/styles.css': 'styles.css', '/picker.js': 'picker.js' };
         const file = files[request.url];
         if (!file) {
             response.writeHead(404).end();
@@ -69,20 +69,30 @@ async function workspace(t, options = {}) {
         if (resource === 'projects') {
             if (options.projectsUnavailable) return reply({ message: 'Not found' }, 404);
             if (method === 'GET') return reply(state.projects);
+            if (method === 'POST' || method === 'PUT') {
+                if (!data.name.trim()) return reply({ message: 'Project name cannot be blank.' }, 400);
+                if (data.name.length > 200) return reply({
+                    violations: [{ field: 'request.name', message: 'Project name cannot exceed 200 characters.' }]
+                }, 400);
+            }
             if (method === 'POST') {
-                if (!data.name.trim()) return reply({ message: 'Project name must not be blank.' }, 400);
                 const project = { id: '00000000-0000-0000-0000-000000000003', name: data.name };
                 state.projects.push(project);
                 return reply(project, 201);
             }
             const project = state.projects.find(item => item.id === id);
             if (method === 'PUT') {
+                if (!project) return reply({ message: 'Project not found.' }, 404);
                 project.name = data.name;
                 return reply(project);
             }
             if (method === 'DELETE') {
-                if (state.tickets.some(ticket => ticket.projectId === id)) return reply({ message: 'Project still has assigned tickets.' }, 409);
-                state.projects = state.projects.filter(item => item.id !== id);
+                if (!project) return reply({ message: 'Project not found.' }, 404);
+                if (state.projectDeleteFailure || state.tickets.some(ticket => ticket.projectId === id)) {
+                    if (state.projectDeleteFailure === 500) return route.fulfill({ status: 500, body: '' });
+                    return reply({ message: 'Project has assigned tickets.' }, state.projectDeleteFailure || 409);
+                }
+                state.projects = state.projects.filter(project => project.id !== id);
                 return route.fulfill({ status: 204 });
             }
         }
@@ -119,42 +129,84 @@ async function workspace(t, options = {}) {
     return { page, state };
 }
 
+async function choose(picker, value) {
+    await picker.locator('.picker-trigger').click();
+    await picker.locator(`.picker-option[data-value="${value}"]`).click();
+}
+
 async function capture(page, name) {
     const directory = process.env.WORKBOARD_SCREENSHOT_DIR;
     if (!directory) return;
     await fs.mkdir(directory, { recursive: true });
-    await page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: true });
+    await page.screenshot({ path: path.join(directory, `${name}.png`), fullPage: !await page.locator('dialog[open]').count() });
 }
 
 test('filters assigned and unassigned tickets and updates visible counts', async t => {
     const { page } = await workspace(t);
     await capture(page, 'desktop');
     await expect(page.locator(`[data-ticket-id="${assignedId}"] .project-badge`)).toHaveText('Workboard');
-    await page.locator('#project-filter').selectOption(projectId);
+    await choose(page.locator('#project-filter'), projectId);
     await expect(page.locator('.ticket:visible')).toHaveCount(1);
     await expect(page.locator('[data-status="DOING"] .count')).toHaveText('0');
-    await expect(page.locator('[data-status="TODO"] .create-project')).toHaveValue(projectId);
-    await page.locator('#project-filter').selectOption('unassigned');
+    await expect(page.locator('[data-status="TODO"] .create-project')).toHaveJSProperty('value', projectId);
+    await choose(page.locator('#project-filter'), 'unassigned');
     await expect(page.locator('.ticket:visible')).toHaveCount(1);
     await expect(page.locator(`[data-ticket-id="${unassignedId}"]`)).toBeVisible();
-    await page.locator('#project-filter').selectOption(otherProjectId);
+    await choose(page.locator('#project-filter'), otherProjectId);
     await expect(page.locator('.ticket:visible')).toHaveCount(0);
     await expect(page.locator('.empty:visible')).toHaveCount(3);
 });
 
+test('combines search, project and blocked filters and resets the view', async t => {
+    const { page, state } = await workspace(t);
+    state.tickets[0].blocked = true;
+    state.tickets[0].blockedNote = 'Waiting for design';
+    await page.locator('#refresh').click();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#project-summary')).toHaveText('2 tickets');
+    await page.keyboard.press('/');
+    await expect(page.locator('#ticket-search')).toBeFocused();
+    await page.locator('#ticket-search').fill('DESIGN');
+    await expect(page.locator('.ticket:visible')).toHaveCount(1);
+    await expect(page.locator('[data-status="TODO"] .count')).toHaveText('1');
+    await expect(page.locator('[data-status="DOING"] .count')).toHaveText('0');
+    await page.locator('#blocked-filter').click();
+    await expect(page.locator('#blocked-filter')).toHaveAttribute('aria-pressed', 'true');
+    await choose(page.locator('#project-filter'), otherProjectId);
+    await expect(page.locator('.ticket:visible')).toHaveCount(0);
+    await expect(page.locator('.empty strong').first()).toHaveText('No matching tickets');
+    await page.locator('#clear-filters').click();
+    await expect(page.locator('.ticket:visible')).toHaveCount(2);
+    await expect(page.locator('#ticket-search')).toBeFocused();
+    await expect(page.locator('#blocked-filter')).toHaveAttribute('aria-pressed', 'false');
+    await expect(page.locator('#clear-filters')).toBeHidden();
+    await expect(page.locator('.create-project').first()).toHaveJSProperty('value', '');
+    await page.locator('#ticket-search').fill('workboard');
+    await expect(page.locator('.ticket:visible')).toHaveCount(1);
+    await page.locator('#ticket-search').press('Escape');
+    await expect(page.locator('.ticket:visible')).toHaveCount(2);
+    const card = page.locator(`[data-ticket-id="${assignedId}"]`);
+    await card.locator('.ticket-title').click();
+    await expect(page.locator('#ticket-search')).toBeDisabled();
+    await expect(page.locator('#blocked-filter')).toBeDisabled();
+    await card.locator('textarea').press('/');
+    await expect(card.locator('textarea')).toBeFocused();
+    await card.locator('textarea').press('Escape');
+    await expect(page.locator('#ticket-search')).toBeEnabled();
+});
+
 test('creates a ticket in the selected project and preserves assignment during title edits and moves', async t => {
     const { page, state } = await workspace(t);
-    await page.locator('#project-filter').selectOption(projectId);
+    await choose(page.locator('#project-filter'), projectId);
     await page.locator('#todo-title').fill('New project task');
     await page.locator('[data-status="TODO"] .create-form button[type="submit"]').click();
     const card = page.locator('[data-ticket-id="00000000-0000-0000-0000-000000000013"]');
     await expect(card.locator('.project-badge')).toHaveText('Workboard');
     await card.locator('.ticket-title').click();
-    await expect(page.locator('#project-filter')).toBeDisabled();
+    await expect(page.locator('#project-filter').locator('.picker-trigger')).toBeDisabled();
     await card.locator('textarea').fill('Renamed task');
     await card.locator('textarea').press('Control+Enter');
     await expect(card.locator('.ticket-title')).toHaveText('Renamed task');
-    await card.locator('.ticket-menu-trigger').click();
     await card.getByRole('button', { name: /Start ticket/ }).click();
     await expect(page.locator('[data-status="DOING"] .ticket-title', { hasText: 'Renamed task' })).toBeVisible();
     assert.equal(state.writes.length, 3);
@@ -165,46 +217,69 @@ test('assigns and unassigns existing tickets and removes them from an incompatib
     const { page } = await workspace(t);
     let card = page.locator(`[data-ticket-id="${unassignedId}"]`);
     await card.locator('.ticket-menu-trigger').click();
-    await card.locator('.ticket-project-select').selectOption(projectId);
+    await choose(card.locator('.ticket-project-select'), projectId);
     await expect(card.locator('.project-badge')).toHaveText('Workboard');
-    await page.locator('#project-filter').selectOption(projectId);
+    await choose(page.locator('#project-filter'), projectId);
     await card.locator('.ticket-menu-trigger').click();
-    await card.locator('.ticket-project-select').selectOption('');
+    await choose(card.locator('.ticket-project-select'), '');
     await expect(card).toBeHidden();
     await expect(page.locator('#feedback')).toContainText('outside the selected project view');
-    await expect(page.locator('#project-filter')).toBeFocused();
+    await expect(page.locator('#project-filter').locator('.picker-trigger')).toBeFocused();
 });
 
-test('creates, renames and deletes projects and reports conflicts without hiding the dialog', async t => {
+test('creates and renames projects and keeps the saved project selected', async t => {
     const { page } = await workspace(t);
     await page.locator('#manage-projects').click();
     await page.locator('#project-name').fill('');
     await page.locator('#save-project').click();
-    await expect(page.locator('#project-feedback')).toContainText('Project name must not be blank.');
+    await expect(page.locator('#project-feedback')).toContainText('Project name cannot be blank.');
     await page.locator('#project-name').fill('New project');
     await page.locator('#save-project').click();
     await expect(page.locator('#project-feedback')).toContainText('Project created.');
-    await page.locator('#managed-project').selectOption(projectId);
+    await expect(page.locator('#managed-project')).toHaveJSProperty('value', '00000000-0000-0000-0000-000000000003');
+    await expect(page.locator('#project-name')).toHaveValue('New project');
+    await expect(page.locator('#save-project')).toHaveText('Save name');
+    await expect(page.locator('#project-filter .picker-option', { hasText: 'New project' })).toHaveCount(1);
+    await choose(page.locator('#managed-project'), projectId);
     await page.locator('#project-name').fill('Renamed project');
     await page.locator('#save-project').click();
     await expect(page.locator('#project-feedback')).toHaveText('Project renamed.');
     await expect(page.locator(`[data-ticket-id="${assignedId}"] .project-badge`)).toHaveText('Renamed project');
-    page.on('dialog', dialog => dialog.accept());
-    await page.locator('#delete-project').click();
-    await expect(page.locator('#project-feedback')).toContainText('Project still has assigned tickets.');
-    await page.locator('#managed-project').selectOption('00000000-0000-0000-0000-000000000003');
-    await page.locator('#delete-project').click();
-    await expect(page.locator('#project-feedback')).toHaveText('Project deleted.');
-    await expect(page.locator('#managed-project option', { hasText: 'New project' })).toHaveCount(1);
+    await expect(page.locator('#delete-project')).toBeDisabled();
     await page.keyboard.press('Escape');
     await expect(page.locator('#project-dialog')).not.toBeVisible();
+});
+
+test('shows project validation and missing-project errors and preserves input for retry', async t => {
+    const { page, state } = await workspace(t);
+    await page.locator('#manage-projects').click();
+    for (const id of ['', otherProjectId]) {
+        await choose(page.locator('#managed-project'), id);
+        for (const name of ['   ', 'x'.repeat(201)]) {
+            await page.locator('#project-name').fill(name);
+            await page.locator('#save-project').click();
+            await expect(page.locator('#project-feedback')).toContainText('HTTP 400');
+            await expect(page.locator('#project-name')).toHaveValue(name);
+            await expect(page.locator('#save-project')).toBeEnabled();
+        }
+    }
+    state.projects = state.projects.filter(project => project.id !== otherProjectId);
+    await page.locator('#project-name').fill('Missing project');
+    await page.locator('#save-project').click();
+    await expect(page.locator('#project-feedback')).toContainText('HTTP 404: Project not found.');
+    await expect(page.locator('#project-name')).toHaveValue('Missing project');
+    await expect(page.locator('#close-projects')).toBeEnabled();
+    await page.locator('#close-projects').click();
+    await page.locator('#refresh').click();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    await expect(page.locator('#managed-project .picker-option', { hasText: 'Another project', exact: true })).toHaveCount(0);
 });
 
 test('keeps tickets usable when the project API is unavailable', async t => {
     const { page, state } = await workspace(t, { projectsUnavailable: true });
     await expect(page.locator('#project-notice')).toBeVisible();
-    await expect(page.locator('.create-project').first()).toBeDisabled();
-    await page.locator('#project-filter').selectOption(projectId);
+    await expect(page.locator('.create-project').first().locator('.picker-trigger')).toBeDisabled();
+    await choose(page.locator('#project-filter'), projectId);
     await expect(page.locator('.ticket:visible')).toHaveCount(1);
     const card = page.locator(`[data-ticket-id="${assignedId}"]`);
     await card.locator('.ticket-title').click();
@@ -221,10 +296,10 @@ test('reports ignored assignments rather than claiming success', async t => {
     const { page } = await workspace(t, { ignoreAssignment: true });
     const card = page.locator(`[data-ticket-id="${unassignedId}"]`);
     await card.locator('.ticket-menu-trigger').click();
-    await card.locator('.ticket-project-select').selectOption(projectId);
+    await choose(card.locator('.ticket-project-select'), projectId);
     await expect(card.locator('.ticket-feedback')).toContainText('project assignment was not applied');
     await expect(card.locator('.project-badge')).toHaveText('Unassigned');
-    await page.locator('[data-status="TODO"] .create-project').selectOption(projectId);
+    await choose(page.locator('[data-status="TODO"] .create-project'), projectId);
     await page.locator('#todo-title').fill('Created without expected project');
     await page.locator('[data-status="TODO"] .create-form button[type="submit"]').click();
     await expect(page.locator('#todo-create-error')).toContainText('project assignment was not applied');
@@ -235,23 +310,209 @@ test('shows assignment errors and restores controls for retry', async t => {
     const { page } = await workspace(t, { rejectUpdate: true });
     const card = page.locator(`[data-ticket-id="${assignedId}"]`);
     await card.locator('.ticket-menu-trigger').click();
-    await card.locator('.ticket-project-select').selectOption(otherProjectId);
+    await choose(card.locator('.ticket-project-select'), otherProjectId);
     await expect(card.locator('.ticket-feedback')).toContainText('Assignment rejected.');
-    await expect(card.locator('.ticket-project-select')).toBeEnabled();
-    await expect(card.locator('.ticket-project-select')).toHaveValue(projectId);
+    await expect(card.locator('.ticket-project-select').locator('.picker-trigger')).toBeEnabled();
+    await expect(card.locator('.ticket-project-select')).toHaveJSProperty('value', projectId);
     await expect(card.locator('.project-badge')).toHaveText('Workboard');
 });
 
-test('keeps mobile layouts within the viewport in light and dark themes', async t => {
+test('stays light and within the mobile viewport regardless of system appearance', async t => {
     for (const colorScheme of ['light', 'dark']) {
         const { page } = await workspace(t, { context: { viewport: { width: 390, height: 844 }, colorScheme } });
+        assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).colorScheme), 'light');
+        assert.equal(await page.evaluate(() => getComputedStyle(document.documentElement).backgroundColor), 'rgb(255, 255, 255)');
         await page.locator('#manage-projects').click();
         await expect(page.locator('#project-dialog')).toBeVisible();
         await capture(page, `mobile-dialog-${colorScheme}`);
         assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
         await page.keyboard.press('Escape');
-        await page.locator('#project-filter').selectOption(projectId);
+        await choose(page.locator('#project-filter'), projectId);
         await expect(page.locator('.ticket:visible')).toHaveCount(1);
         await capture(page, `mobile-board-${colorScheme}`);
     }
+});
+
+test('handles crowded boards, long names and ticket menus on tablet and small mobile', async t => {
+    for (const width of [960, 320]) {
+        const { page, state } = await workspace(t, { context: { viewport: { width, height: 900 }, colorScheme: 'dark' } });
+        state.projects[0].name = 'A'.repeat(200);
+        state.tickets = Array.from({ length: 9 }, (_, index) => ({
+            id: `00000000-0000-0000-0000-${String(index + 21).padStart(12, '0')}`,
+            title: index === 0 ? 'A'.repeat(200) : ['Review the release checklist', 'Refine project validation', 'Ship the project API'][index % 3],
+            status: ['TODO', 'DOING', 'DONE'][index % 3],
+            blocked: index === 0,
+            blockedNote: index === 0 ? 'Waiting for the API contract review' : null,
+            projectId: index % 2 ? null : projectId,
+            completedAt: null
+        }));
+        await page.locator('#refresh').click();
+    await expect(page.locator('#refresh')).toBeEnabled();
+        await expect(page.locator('.ticket')).toHaveCount(9);
+        await expect(page.locator('#project-summary')).toHaveText('9 tickets');
+        const card = page.locator('.ticket').first();
+        await card.locator('.ticket-menu-trigger').focus();
+        await page.keyboard.press('ArrowDown');
+        await expect(card.locator('.ticket-project-select').locator('.picker-trigger')).toBeFocused();
+        const bounds = await card.locator('.ticket-menu-items').boundingBox();
+        assert.ok(bounds.x >= 0 && bounds.x + bounds.width <= width);
+        await capture(page, `crowded-${width}-dark`);
+        await page.keyboard.press('Escape');
+        await expect(card.locator('.ticket-menu-trigger')).toBeFocused();
+        await expect(card.locator('.ticket-menu-items')).toBeHidden();
+        assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    }
+});
+
+test('custom project pickers support keyboard selection, typeahead and dismissal', async t => {
+    const { page } = await workspace(t);
+    const picker = page.locator('#project-filter');
+    const trigger = picker.locator('.picker-trigger');
+    await expect(page.locator('select')).toHaveCount(0);
+    await trigger.focus();
+    await trigger.press('End');
+    await expect(trigger).toHaveAttribute('aria-expanded', 'true');
+    await capture(page, 'custom-project-picker');
+    await trigger.press('Enter');
+    await expect(picker).toHaveJSProperty('value', projectId);
+    await expect(page.locator('.ticket:visible')).toHaveCount(1);
+    await trigger.press('Home');
+    await trigger.press('Escape');
+    await expect(picker).toHaveJSProperty('value', projectId);
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await trigger.press('a');
+    await trigger.press('n');
+    await trigger.press('Enter');
+    await expect(picker).toHaveJSProperty('value', otherProjectId);
+    await expect(page.locator('.ticket:visible')).toHaveCount(0);
+    await trigger.click();
+    await page.locator('#ticket-search').click();
+    await expect(trigger).toHaveAttribute('aria-expanded', 'false');
+    await page.locator('#manage-projects').click();
+    const managed = page.locator('#managed-project .picker-trigger');
+    await managed.click();
+    await managed.press('Escape');
+    await expect(page.locator('#project-dialog')).toBeVisible();
+    await expect(managed).toHaveAttribute('aria-expanded', 'false');
+    await page.keyboard.press('Escape');
+    await expect(page.locator('#project-dialog')).not.toBeVisible();
+});
+
+test('moves tickets with visible arrows and uses a custom deletion confirmation', async t => {
+    const { page, state } = await workspace(t);
+    const card = page.locator(`[data-ticket-id="${assignedId}"]`);
+    assert.equal(await card.evaluate(node => node.draggable), false);
+    await expect(page.locator('.drag-handle')).toHaveCount(0);
+    await expect(card.locator('.move-action')).toHaveCount(1);
+    await card.getByRole('button', { name: /Start ticket/ }).click();
+    await expect(page.locator('[data-status="DOING"] .ticket')).toHaveCount(2);
+    await expect(card.locator('.move-action')).toHaveCount(2);
+    await card.getByRole('button', { name: /Complete ticket/ }).focus();
+    await page.keyboard.press('Enter');
+    await expect(page.locator('[data-status="DONE"] .ticket')).toHaveCount(1);
+    await expect(card.locator('.move-action')).toHaveCount(1);
+    await card.locator('.ticket-menu-trigger').click();
+    await card.getByRole('button', { name: /Delete ticket/ }).click();
+    await expect(page.locator('#delete-dialog')).toBeVisible();
+    await expect(page.locator('#cancel-delete')).toBeFocused();
+    await capture(page, 'delete-confirmation');
+    await page.locator('#cancel-delete').click();
+    await expect(card).toBeVisible();
+    assert.equal(state.writes.filter(write => write.method === 'DELETE').length, 0);
+    await card.locator('.ticket-menu-trigger').click();
+    await card.getByRole('button', { name: /Delete ticket/ }).click();
+    await page.locator('#confirm-delete').click();
+    await expect(card).toHaveCount(0);
+    assert.equal(state.writes.filter(write => write.method === 'DELETE').length, 1);
+});
+
+test('search supports multiple words, literal punctuation, highlights and keyboard navigation', async t => {
+    const { page, state } = await workspace(t);
+    state.tickets[0].title = 'Review [draft] API <img src=x>';
+    await page.locator('#refresh').click();
+    await expect(page.locator('#refresh')).toBeEnabled();
+    const search = page.locator('#ticket-search');
+    const card = page.locator(`[data-ticket-id="${assignedId}"]`);
+    await page.keyboard.press('Control+k');
+    await expect(search).toBeFocused();
+    await search.fill('  API   workboard  ');
+    await expect(page.locator('.ticket:visible')).toHaveCount(1);
+    await expect(page.locator('#search-count')).toHaveText('1 / 2');
+    await expect(card.locator('.ticket-title mark')).toHaveText('API');
+    await expect(card.locator('.project-badge mark')).toHaveText('Workboard');
+    await capture(page, 'search-results');
+    await search.press('Enter');
+    await expect(card.locator('.ticket-title')).toBeFocused();
+    await expect(card.locator('textarea')).toHaveCount(0);
+    await page.keyboard.press('Meta+k');
+    await expect(search).toBeFocused();
+    await search.fill('[draft]');
+    await expect(card.locator('.ticket-title mark')).toHaveText('[draft]');
+    await search.fill('<img src=x>');
+    await expect(card).toBeVisible();
+    await expect(card.locator('.ticket-title img')).toHaveCount(0);
+    await page.locator('#clear-search').click();
+    await expect(search).toBeFocused();
+    await expect(card.locator('mark')).toHaveCount(0);
+    await choose(page.locator('#project-filter'), projectId);
+    await search.fill('000000000011');
+    await expect(card).toBeVisible();
+    await page.locator('#clear-search').click();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', projectId);
+    await search.fill('no such ticket');
+    await expect(page.locator('#search-count')).toHaveText('0 / 1');
+    await search.press('Enter');
+    await expect(search).toBeFocused();
+    await capture(page, 'search-empty');
+    await search.press('Escape');
+    await expect(card).toBeVisible();
+    await page.setViewportSize({ width: 320, height: 720 });
+    await search.fill('API workboard');
+    await expect(page.locator('#search-count')).toHaveText('1 / 1');
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    await capture(page, 'search-mobile');
+});
+
+test('deletes empty projects with confirmation, handles failures, and protects assigned projects', async t => {
+    const { page, state } = await workspace(t);
+    await choose(page.locator('#project-filter'), otherProjectId);
+    await page.locator('#manage-projects').click();
+    await expect(page.locator('#delete-project')).toBeHidden();
+    await choose(page.locator('#managed-project'), projectId);
+    await expect(page.locator('#delete-project')).toBeDisabled();
+    await expect(page.locator('#project-delete-note')).toBeVisible();
+    await choose(page.locator('#managed-project'), otherProjectId);
+    await expect(page.locator('#delete-project')).toBeEnabled();
+    await page.locator('#delete-project').click();
+    await expect(page.locator('#delete-title')).toHaveText('Delete project?');
+    await expect(page.locator('#delete-description')).toContainText('Another project');
+    await capture(page, 'delete-project');
+    await page.locator('#cancel-delete').click();
+    assert.equal(state.writes.length, 0);
+    state.projectDeleteFailure = 409;
+    await page.locator('#delete-project').click();
+    await page.locator('#confirm-delete').click();
+    await expect(page.locator('#project-feedback')).toHaveText('HTTP 409: Project has assigned tickets.');
+    await expect(page.locator('#managed-project')).toHaveJSProperty('value', otherProjectId);
+    await expect(page.locator('#project-name')).toHaveValue('Another project');
+    await expect(page.locator('#delete-project')).toBeEnabled();
+    state.projectDeleteFailure = 500;
+    await page.locator('#delete-project').click();
+    await page.locator('#confirm-delete').click();
+    await expect(page.locator('#project-feedback')).toContainText('HTTP 500:');
+    await expect(page.locator('#managed-project')).toHaveJSProperty('value', otherProjectId);
+    state.projects = state.projects.filter(project => project.id !== otherProjectId);
+    await page.locator('#delete-project').click();
+    await page.locator('#confirm-delete').click();
+    await expect(page.locator('#project-feedback')).toHaveText('HTTP 404: Project not found.');
+    state.projects.push({ id: otherProjectId, name: 'Another project' });
+    state.projectDeleteFailure = null;
+    await page.locator('#delete-project').click();
+    await page.locator('#confirm-delete').click();
+    await expect(page.locator('#project-feedback')).toHaveText('Project deleted.');
+    await expect(page.locator('#managed-project')).toHaveJSProperty('value', '');
+    await expect(page.locator('#delete-project')).toBeHidden();
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', 'all');
+    await expect(page.locator('#project-filter .picker-option[data-value="' + otherProjectId + '"]')).toHaveCount(0);
+    assert.equal(state.projects.some(project => project.id === otherProjectId), false);
 });
