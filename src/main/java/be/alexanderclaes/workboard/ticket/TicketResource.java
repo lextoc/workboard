@@ -3,10 +3,8 @@ package be.alexanderclaes.workboard.ticket;
 import be.alexanderclaes.workboard.project.Project;
 
 import jakarta.persistence.EntityManager;
-import jakarta.validation.constraints.NotNull;
 import jakarta.inject.Inject;
 import jakarta.transaction.Transactional;
-import jakarta.validation.Valid;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -23,6 +21,15 @@ import java.util.Map;
 public class TicketResource {
     @Inject
     EntityManager entityManager;
+
+    private BadRequestException badRequest(String message) {
+        return new BadRequestException(
+                Response.status(Response.Status.BAD_REQUEST)
+                        .type(MediaType.APPLICATION_JSON_TYPE)
+                        .entity(Map.of("message", message))
+                        .build()
+        );
+    }
 
     @GET
     public List<TicketResponse> getTickets() {
@@ -58,18 +65,30 @@ public class TicketResource {
 
     @Transactional
     @POST
-    public Response create(@Valid @NotNull CreateTicketRequest request) {
+    public Response create(CreateTicketRequest request) {
+        if (request == null) {
+            throw new BadRequestException(
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .type(MediaType.APPLICATION_JSON_TYPE)
+                            .entity(Map.of("message", "Request body is required."))
+                            .build()
+            );
+        }
+
         Project project = resolveProject(request.projectId());
+        Ticket ticket;
 
-        Ticket ticket = new Ticket();
+        try {
+            ticket = new Ticket(
+                    request.title(),
+                    request.status(),
+                    Instant.now()
+            );
+        } catch (IllegalArgumentException failure) {
+            throw badRequest(failure.getMessage());
+        }
 
-        ticket.setTitle(request.title().value());
-        ticket.setStatus(request.status());
-        ticket.setBlocked(false);
-        ticket.setBlockedNote(null);
-        ticket.setCompletedAt(request.status() == TicketStatus.DONE ? Instant.now() : null);
         ticket.setProject(project);
-
         entityManager.persist(ticket);
 
         return Response.status(Response.Status.CREATED).entity(ticket).build();
@@ -78,40 +97,39 @@ public class TicketResource {
     @Transactional
     @PUT
     @Path("/{id}")
-    public TicketResponse update(@PathParam("id") UUID id, @Valid @NotNull UpdateTicketRequest request) {
-        Project project = resolveProject(request.projectId());
+    public TicketResponse update(
+            @PathParam("id") UUID id,
+            UpdateTicketRequest request
+    ) {
+        if (request == null) {
+            throw new BadRequestException(
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .type(MediaType.APPLICATION_JSON_TYPE)
+                            .entity(Map.of("message", "Request body is required."))
+                            .build()
+            );
+        }
 
+        Project project = resolveProject(request.projectId());
         Ticket ticket = entityManager.find(Ticket.class, id);
 
         if (ticket == null) {
             throw new NotFoundException("Ticket not found.");
         }
 
-        if (request.blocked() && request.status() == TicketStatus.DONE) {
-            throw new BadRequestException(
-                    "Unblock this ticket before moving it to DONE.");
+        try {
+            ticket.changeState(
+                    request.status(),
+                    request.blocked(),
+                    request.blockedNote(),
+                    Instant.now()
+            );
+        } catch (IllegalArgumentException failure) {
+            throw badRequest(failure.getMessage());
         }
 
-        if (request.blocked() && (request.blockedNote() == null || request.blockedNote().value().isBlank())) {
-            throw new BadRequestException(
-                    "Please provide a reason for blocking this ticket.");
-        }
-
-        TicketStatus previousStatus = ticket.getStatus();
-
-        ticket.setTitle(request.title().value());
-        ticket.setStatus(request.status());
-        ticket.setBlocked(request.blocked());
-        ticket.setBlockedNote(request.blocked() ? request.blockedNote().value() : null);
+        ticket.setTitle(request.title());
         ticket.setProject(project);
-
-        if (request.status() == TicketStatus.DONE) {
-            if (previousStatus != TicketStatus.DONE) {
-                ticket.setCompletedAt(Instant.now());
-            }
-        } else {
-            ticket.setCompletedAt(null);
-        }
 
         return TicketResponse.from(ticket);
     }

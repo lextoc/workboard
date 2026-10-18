@@ -1,11 +1,8 @@
 package be.alexanderclaes.workboard.project;
 
-import be.alexanderclaes.workboard.ticket.Ticket;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
-import jakarta.validation.Valid;
-import jakarta.validation.constraints.NotNull;
 import jakarta.ws.rs.*;
 import jakarta.ws.rs.core.MediaType;
 import jakarta.ws.rs.core.Response;
@@ -36,7 +33,16 @@ public class ProjectResource {
 
     @POST
     @Transactional
-    public Response create(@Valid @NotNull CreateProjectRequest request) {
+    public Response create(CreateProjectRequest request) {
+        if (request == null) {
+            throw new BadRequestException(
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .type(MediaType.APPLICATION_JSON_TYPE)
+                            .entity(Map.of("message", "Request body is required."))
+                            .build()
+            );
+        }
+
         Project project = new Project();
         project.setName(request.name());
 
@@ -52,8 +58,17 @@ public class ProjectResource {
     @Transactional
     public ProjectResponse update(
             @PathParam("id") UUID id,
-            @Valid @NotNull UpdateProjectRequest request
+            UpdateProjectRequest request
     ) {
+        if (request == null) {
+            throw new BadRequestException(
+                    Response.status(Response.Status.BAD_REQUEST)
+                            .type(MediaType.APPLICATION_JSON_TYPE)
+                            .entity(Map.of("message", "Request body is required."))
+                            .build()
+            );
+        }
+
         Project project = entityManager.find(Project.class, id);
 
         if (project == null) {

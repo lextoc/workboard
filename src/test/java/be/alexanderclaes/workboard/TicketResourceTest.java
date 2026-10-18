@@ -11,6 +11,7 @@ import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import org.junit.jupiter.api.Test;
 
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -90,11 +91,13 @@ class TicketResourceTest {
         Map<String, Object> request = new HashMap<>();
         request.put("title", "Choose a column");
         given().contentType(ContentType.JSON).body(request)
-                .when().post("/api/tickets").then().statusCode(400);
+                .when().post("/api/tickets").then().statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Status is required."));
 
         request.put("status", null);
         given().contentType(ContentType.JSON).body(request)
-                .when().post("/api/tickets").then().statusCode(400);
+                .when().post("/api/tickets").then().statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Status is required."));
 
         request.put("status", "DOIGN");
         given().contentType(ContentType.JSON).body(request)
@@ -103,17 +106,49 @@ class TicketResourceTest {
 
     @Test
     void rejectsMissingBlankAndOversizedTitlesOnCreate() {
-        for (Map<String, Object> request : List.of(
-                Map.<String, Object>of("status", "TODO"),
-                Map.<String, Object>of("title", "", "status", "TODO"),
-                Map.<String, Object>of("title", " \t\n", "status", "TODO"),
-                Map.<String, Object>of("title", "x".repeat(201), "status", "TODO"))) {
+        List<Map<String, Object>> requests = new ArrayList<>();
+        requests.add(Map.of("status", "TODO"));
+        Map<String, Object> nullTitle = new HashMap<>();
+        nullTitle.put("title", null);
+        nullTitle.put("status", "TODO");
+        requests.add(nullTitle);
+        for (String title : List.of("", " \t\n", "x".repeat(201))) {
+            requests.add(Map.of("title", title, "status", "TODO"));
+        }
+
+        for (Map<String, Object> request : requests) {
+            String title = (String) request.get("title");
+            String message = title == null ? "Title is required."
+                    : title.isBlank() ? "Title cannot be blank."
+                    : "Title cannot exceed 200 characters.";
             given()
                     .contentType(ContentType.JSON)
                     .body(request)
                     .when().post("/api/tickets")
-                    .then().statusCode(400);
+                    .then().statusCode(400).contentType(ContentType.JSON)
+                    .body("message", equalTo(message));
         }
+    }
+
+    @Test
+    void rejectsNullTicketRequestBodiesWithoutChangingStoredTicket() {
+        UUID id = createTicket("Original title");
+        Map<String, Object> before = given().get("/api/tickets/{id}", id)
+                .then().statusCode(200).extract().jsonPath().getMap("$");
+        List<String> idsBefore = given().get("/api/tickets")
+                .then().statusCode(200).extract().jsonPath().getList("id", String.class);
+
+        given().contentType(ContentType.JSON).body("null")
+                .when().post("/api/tickets").then().statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Request body is required."));
+        given().contentType(ContentType.JSON).body("null")
+                .when().put("/api/tickets/{id}", id).then().statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Request body is required."));
+
+        assertEquals(before, given().get("/api/tickets/{id}", id)
+                .then().statusCode(200).extract().jsonPath().getMap("$"));
+        assertEquals(idsBefore, given().get("/api/tickets")
+                .then().statusCode(200).extract().jsonPath().getList("id", String.class));
     }
 
     @Test
@@ -145,12 +180,14 @@ class TicketResourceTest {
     void blockingRequiresNonblankNoteAndDoesNotChangeStoredTicket() {
         UUID id = createTicket("Original title");
         Map<String, Object> request = state("Changed title", "DOING", true, null);
-        update(id, request).statusCode(400);
+        update(id, request).statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Please provide a reason for blocking this ticket."));
         assertStoredState(id, "Original title", "TODO", false, null);
 
         for (String note : List.of("", " \t\n")) {
             request.put("blockedNote", note);
-            update(id, request).statusCode(400);
+            update(id, request).statusCode(400).contentType(ContentType.JSON)
+                    .body("message", equalTo("Blocked note cannot be blank."));
             assertStoredState(id, "Original title", "TODO", false, null);
         }
     }
@@ -174,7 +211,8 @@ class TicketResourceTest {
         String note = "Waiting for review";
         update(id, state("Blocked ticket", "DOING", true, note)).statusCode(200);
 
-        update(id, state("Changed title", "DONE", true, note)).statusCode(400);
+        update(id, state("Changed title", "DONE", true, note)).statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Unblock this ticket before moving it to DONE."));
         assertStoredState(id, "Blocked ticket", "DOING", true, note);
 
         update(id, state("Changed title", "DONE", false, note))
@@ -230,11 +268,20 @@ class TicketResourceTest {
         invalidValues.forEach((field, value) -> {
             Map<String, Object> request = state("Changed title", "DOING", true, "Valid note");
             request.put(field, value);
-            update(id, request).statusCode(400);
+            ValidatableResponse response = update(id, request).statusCode(400);
+            if (!field.equals("status")) {
+                String message = switch (field) {
+                    case "title" -> "Title cannot be blank.";
+                    case "blocked" -> "Blocked is required.";
+                    default -> "Blocked note cannot exceed 1000 characters.";
+                };
+                response.contentType(ContentType.JSON).body("message", equalTo(message));
+            }
             assertStoredState(id, "Original title", "TODO", false, null);
         });
 
-        update(id, state("x".repeat(201), "DOING", false, null)).statusCode(400);
+        update(id, state("x".repeat(201), "DOING", false, null)).statusCode(400).contentType(ContentType.JSON)
+                .body("message", equalTo("Title cannot exceed 200 characters."));
         assertStoredState(id, "Original title", "TODO", false, null);
     }
 
@@ -243,13 +290,20 @@ class TicketResourceTest {
         UUID id = createTicket("Original title");
 
         for (String field : List.of("title", "status", "blocked")) {
+            String message = switch (field) {
+                case "title" -> "Title is required.";
+                case "status" -> "Status is required.";
+                default -> "Blocked is required.";
+            };
             Map<String, Object> request = state("Changed title", "DOING", true, "Valid note");
             request.remove(field);
-            update(id, request).statusCode(400);
+            update(id, request).statusCode(400).contentType(ContentType.JSON)
+                    .body("message", equalTo(message));
             assertStoredState(id, "Original title", "TODO", false, null);
 
             request.put(field, null);
-            update(id, request).statusCode(400);
+            update(id, request).statusCode(400).contentType(ContentType.JSON)
+                    .body("message", equalTo(message));
             assertStoredState(id, "Original title", "TODO", false, null);
         }
     }
