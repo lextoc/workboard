@@ -17,7 +17,6 @@ import java.util.List;
 import java.util.Map;
 import java.util.UUID;
 
-import static io.restassured.RestAssured.given;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.hasKey;
 import static org.hamcrest.Matchers.notNullValue;
@@ -26,7 +25,7 @@ import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @QuarkusTest
-class TicketResourceTest {
+class TicketResourceTest extends AuthenticatedApiTest {
 
     @Inject
     EntityManager entityManager;
@@ -37,6 +36,7 @@ class TicketResourceTest {
         UUID projectId = QuarkusTransaction.requiringNew().call(() -> {
             Project project = new Project();
             project.setName("Workboard");
+            project.assignOwner(entityManager.getReference(be.alexanderclaes.workboard.auth.AppUser.class, userId));
             entityManager.persist(project);
             entityManager.find(Ticket.class, ticketId).setProject(project);
             return project.getId();

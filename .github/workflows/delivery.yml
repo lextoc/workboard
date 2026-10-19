@@ -60,16 +60,19 @@ jobs:
           DB_PASSWORD: workboard_ci
           QUARKUS_HTTP_HOST: 127.0.0.1
           QUARKUS_HTTP_PORT: '18084'
+          APP_AUTH_COOKIE_NAME: workboard-session
+          APP_AUTH_COOKIE_SECURE: 'false'
+          APP_AUTH_ALLOWED_ORIGIN: http://127.0.0.1:18084
         run: |
           java -jar target/quarkus-app/quarkus-run.jar > target/postgres-smoke.log 2>&1 &
           app_pid=$!
           trap 'kill "$app_pid" 2>/dev/null || true' EXIT
-          python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api
+          python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api --session-file target/smoke-cookies.txt --keep-session
           kill "$app_pid"
           wait "$app_pid" || true
           java -jar target/quarkus-app/quarkus-run.jar >> target/postgres-smoke.log 2>&1 &
           app_pid=$!
-          python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api
+          python3 deploy/smoke-test.py http://127.0.0.1:18084 --exercise-api --session-file target/smoke-cookies.txt --reuse-session
       - name: Show packaged application logs on failure
         if: failure()
         run: cat target/postgres-smoke.log 2>/dev/null || true
@@ -135,6 +138,6 @@ jobs:
           printf 'Deployed `%s` from commit `%s`.\n' "$release" "$GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
       - name: Verify HTTPS and authentication
         env:
-          SMOKE_USERNAME: ${{ secrets.SMOKE_USERNAME }}
+          SMOKE_EMAIL: ${{ secrets.SMOKE_EMAIL }}
           SMOKE_PASSWORD: ${{ secrets.SMOKE_PASSWORD }}
         run: python3 deploy/smoke-test.py https://workboard.alexanderclaes.be --check-auth

@@ -1,5 +1,8 @@
 package be.alexanderclaes.workboard.project;
 
+import be.alexanderclaes.workboard.auth.AppUser;
+import be.alexanderclaes.workboard.auth.CurrentUser;
+import io.quarkus.security.Authenticated;
 import jakarta.inject.Inject;
 import jakarta.persistence.EntityManager;
 import jakarta.transaction.Transactional;
@@ -14,21 +17,26 @@ import java.util.UUID;
 @Path("/api/projects")
 @Produces(MediaType.APPLICATION_JSON)
 @Consumes(MediaType.APPLICATION_JSON)
+@Authenticated
 public class ProjectResource {
     @Inject
     EntityManager entityManager;
 
+    @Inject
+    CurrentUser currentUser;
 
     @GET
     public List<ProjectResponse> getProjects() {
-        return entityManager.createQuery(
-                        "SELECT p FROM Project p ORDER BY p.id ASC",
-                        Project.class
-                )
-                .getResultList()
-                .stream()
-                .map(ProjectResponse::from)
-                .toList();
+        return entityManager.createQuery("""
+            SELECT p FROM Project p
+            WHERE p.owner.id = :userId
+            ORDER BY p.id ASC
+            """, Project.class)
+                    .setParameter("userId", currentUser.id())
+                    .getResultList()
+                    .stream()
+                    .map(ProjectResponse::from)
+                    .toList();
     }
 
     @POST
@@ -45,6 +53,9 @@ public class ProjectResource {
 
         Project project = new Project();
         project.setName(request.name());
+        project.assignOwner(
+                entityManager.getReference(AppUser.class, currentUser.id())
+        );
 
         entityManager.persist(project);
 
@@ -69,16 +80,7 @@ public class ProjectResource {
             );
         }
 
-        Project project = entityManager.find(Project.class, id);
-
-        if (project == null) {
-            throw new NotFoundException(
-                    Response.status(Response.Status.NOT_FOUND)
-                            .type(MediaType.APPLICATION_JSON_TYPE)
-                            .entity(Map.of("message", "Project not found."))
-                            .build()
-            );
-        }
+        Project project = requireOwnedProject(id);
 
         project.setName(request.name());
 
@@ -89,16 +91,7 @@ public class ProjectResource {
     @DELETE
     @Path("/{id}")
     public Response delete(@PathParam("id") UUID id) {
-        Project project = entityManager.find(Project.class, id);
-
-        if (project == null) {
-            throw new NotFoundException(
-                    Response.status(Response.Status.NOT_FOUND)
-                            .type(MediaType.APPLICATION_JSON_TYPE)
-                            .entity(Map.of("message", "Project not found."))
-                            .build()
-            );
-        }
+        Project project = requireOwnedProject(id);
 
         long assignedTickets = entityManager.createQuery(
                 "SELECT COUNT(t) FROM Ticket t WHERE t.project.id = :projectId",
@@ -117,5 +110,18 @@ public class ProjectResource {
         entityManager.remove(project);
 
         return Response.noContent().build();
+    }
+
+    private Project requireOwnedProject(UUID projectId) {
+        return entityManager.createQuery("""
+            SELECT p FROM Project p
+            WHERE p.id = :projectId
+              AND p.owner.id = :userId
+            """, Project.class)
+                .setParameter("projectId", projectId)
+                .setParameter("userId", currentUser.id())
+                .getResultStream()
+                .findFirst()
+                .orElseThrow(() -> new NotFoundException("Project not found."));
     }
 }

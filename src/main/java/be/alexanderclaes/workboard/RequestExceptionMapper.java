@@ -40,6 +40,14 @@ public class RequestExceptionMapper
             }
         }
 
+        if (exception.getResponse().getStatus() == 404
+                && !exception.getResponse().hasEntity()) {
+            return Response.fromResponse(exception.getResponse())
+                    .type(MediaType.APPLICATION_JSON_TYPE)
+                    .entity(Map.of("message", exception.getMessage()))
+                    .build();
+        }
+
         return exception.getResponse();
     }
 }

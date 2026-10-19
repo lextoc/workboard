@@ -21,8 +21,22 @@ const savedTickets = new Map();
 const pendingTickets = new Set();
 const editingTickets = new Set();
 const savedProjects = new Map();
-const dropdownStorageKey = 'workboard.dropdowns.v1';
-const dropdownPreferences = readDropdownPreferences();
+let dropdownStorageKey = null;
+let dropdownPreferences = {};
+let currentAccount = null;
+let sessionGeneration = 0;
+let authMode = 'login';
+let authBusy = false;
+const authPanel = document.querySelector('#auth-panel');
+const authForm = document.querySelector('#auth-form');
+const authFeedback = document.querySelector('#auth-feedback');
+const authPassword = document.querySelector('#auth-password');
+const authSubmit = document.querySelector('#auth-submit');
+const authSwitch = document.querySelector('#auth-switch');
+const retrySession = document.querySelector('#retry-session');
+const workspace = document.querySelector('#workspace');
+const headerActions = document.querySelector('.header-actions');
+const logoutButton = document.querySelector('#logout');
 let dropdownsRestored = false;
 let refreshing = false;
 let pendingCreates = 0;
@@ -45,6 +59,7 @@ function readDropdownPreferences() {
 }
 
 function persistDropdownPreferences() {
+    if (!dropdownStorageKey || !currentAccount) return;
     dropdownPreferences.filter = projectFilter.value;
     if (projectCatalogReady && dropdownsRestored) {
         dropdownPreferences.managed = managedProject.value;
@@ -132,7 +147,9 @@ function apiErrorMessage(response, data, body) {
         blocked: 'Blocked',
         blockedNote: 'Blocking reason',
         projectId: 'Project',
-        name: 'Project name'
+        name: 'Project name',
+        email: 'Email',
+        password: 'Password'
     };
     const violations = Array.isArray(data?.violations)
         ? data.violations.flatMap(item => {
@@ -162,12 +179,19 @@ function apiErrorMessage(response, data, body) {
 }
 
 async function api(path = '', options = {}, resource = 'tickets') {
+    const generation = sessionGeneration;
+    const method = (options.method ?? 'GET').toUpperCase();
+    const headers = new Headers(options.headers);
+    headers.set('Accept', 'application/json');
+    if (!['GET', 'HEAD', 'OPTIONS'].includes(method)) headers.set('X-Workboard-Request', '1');
     let response;
     let body;
     try {
         response = await fetch(`/api/${resource}${path}`, {
             ...options,
-            headers: { 'Accept': 'application/json', ...options.headers }
+            method,
+            credentials: 'same-origin',
+            headers
         });
         body = await response.text();
     } catch {
@@ -179,8 +203,16 @@ async function api(path = '', options = {}, resource = 'tickets') {
     } catch {
         data = null;
     }
+    if (resource !== 'auth' && generation !== sessionGeneration) {
+        throw new Error('The session changed. Log in again to continue.');
+    }
     if (!response.ok) {
-        throw new Error(apiErrorMessage(response, data, body));
+        const error = new Error(apiErrorMessage(response, data, body));
+        error.status = response.status;
+        if (response.status === 401 && resource !== 'auth') {
+            showSignedOut('Your session has expired. Log in again to continue.', true);
+        }
+        throw error;
     }
     if (body && data === null && response.status !== 204) {
         throw new Error('The server returned an unexpected response. Refresh to check the saved state.');
@@ -194,6 +226,7 @@ function cardFor(id) {
 
 function updateRefresh() {
     const busy = refreshing || pendingTickets.size > 0 || pendingCreates > 0 || pendingProject;
+    logoutButton.disabled = busy || editingTickets.size > 0 || authBusy;
     refreshButton.disabled = busy;
     projectFilter.disabled = busy || editingTickets.size > 0;
     manageProjectsButton.disabled = busy || editingTickets.size > 0;
@@ -707,12 +740,13 @@ function ticketCard(ticket) {
 }
 
 async function loadTickets() {
-    if (refreshing || pendingTickets.size || pendingCreates || pendingProject) return;
+    if (!currentAccount || refreshing || pendingTickets.size || pendingCreates || pendingProject) return;
     const focused = document.activeElement;
     refreshing = true;
     updateRefresh();
     try {
         await loadProjects();
+        if (!currentAccount) return false;
         const tickets = await api();
         if (!Array.isArray(tickets)) throw new Error('Expected a ticket list from the server.');
         const received = new Set(tickets.map(ticket => String(ticket.id)));
@@ -845,7 +879,7 @@ document.addEventListener('keydown', event => {
     const command = event.key.toLowerCase() === 'k' && (event.metaKey || event.ctrlKey) && !event.altKey;
     const slash = event.key === '/' && !event.ctrlKey && !event.metaKey && !event.altKey
         && !event.target.closest('input, textarea, project-picker, [contenteditable="true"]');
-    if ((!command && !slash) || event.isComposing || projectDialog.open
+    if (!currentAccount || (!command && !slash) || event.isComposing || projectDialog.open
         || document.querySelector('#delete-dialog').open || ticketSearch.disabled) return;
     event.preventDefault();
     document.querySelectorAll('project-picker').forEach(picker => picker.close());
@@ -950,4 +984,138 @@ deleteProjectButton.addEventListener('click', async () => {
 
 projectFilter.setOptions([{ value: 'all', textContent: 'All projects' }, { value: 'unassigned', textContent: 'Unassigned' }]);
 managedProject.setOptions([{ value: '', textContent: 'New project' }]);
-loadTickets();
+
+function showAuthMessage(message, error = false) {
+    authFeedback.textContent = message;
+    authFeedback.classList.toggle('error', error);
+}
+
+function setAuthMode(mode) {
+    authMode = mode;
+    const registering = mode === 'register';
+    document.querySelector('#auth-title').textContent = registering ? 'Create your account' : 'Log in to Workboard';
+    document.querySelector('#auth-description').textContent = registering
+        ? 'Start a private board for your tickets and projects.' : 'Your tickets and projects, in one place.';
+    authSubmit.textContent = registering ? 'Create account' : 'Log in';
+    authSwitch.textContent = registering ? 'Already have an account? Log in' : 'Create an account';
+    authPassword.autocomplete = registering ? 'new-password' : 'current-password';
+    authPassword.minLength = registering ? 15 : 1;
+    document.querySelector('#auth-password-help').hidden = !registering;
+    authPassword.value = '';
+}
+
+function showSignedOut(message = '', error = false) {
+    sessionGeneration++;
+    currentAccount = null;
+    dropdownStorageKey = null;
+    dropdownPreferences = {};
+    dropdownsRestored = false;
+    workspace.hidden = true;
+    headerActions.hidden = true;
+    document.querySelector('.skip-link').hidden = true;
+    document.querySelector('#account-email').textContent = '';
+    closeTicketMenus();
+    document.querySelectorAll('dialog[open]').forEach(dialog => dialog.close());
+    savedTickets.clear();
+    savedProjects.clear();
+    document.querySelectorAll('.cards').forEach(cards => cards.replaceChildren());
+    authPanel.hidden = false;
+    authForm.hidden = false;
+    retrySession.hidden = true;
+    setAuthMode('login');
+    showAuthMessage(message, error);
+    document.querySelector('#auth-email').focus();
+}
+
+async function restoreSession() {
+    retrySession.hidden = true;
+    authForm.hidden = true;
+    showAuthMessage('Checking your session…');
+    try {
+        const user = await api('/me', {}, 'auth');
+        if (!user || typeof user.id !== 'string' || typeof user.email !== 'string') {
+            throw new Error('The server returned an invalid account response.');
+        }
+        currentAccount = user;
+        dropdownStorageKey = `workboard.dropdowns.v1.${user.id}`;
+        dropdownPreferences = readDropdownPreferences();
+        document.querySelector('#account-email').textContent = user.email;
+        authPanel.hidden = true;
+        workspace.hidden = false;
+        headerActions.hidden = false;
+        document.querySelector('.skip-link').hidden = false;
+        await loadTickets();
+    } catch (error) {
+        if (error.status === 401) {
+            showSignedOut();
+        } else {
+            showAuthMessage(error.message, true);
+            retrySession.hidden = false;
+        }
+    }
+}
+
+authSwitch.addEventListener('click', () => {
+    if (authBusy) return;
+    setAuthMode(authMode === 'login' ? 'register' : 'login');
+    showAuthMessage('');
+    document.querySelector('#auth-email').focus();
+});
+
+retrySession.addEventListener('click', restoreSession);
+
+authForm.addEventListener('submit', async event => {
+    event.preventDefault();
+    if (authBusy) return;
+    authBusy = true;
+    authForm.setAttribute('aria-busy', 'true');
+    authForm.querySelectorAll('input, button').forEach(control => { control.disabled = true; });
+    const email = document.querySelector('#auth-email').value;
+    const password = authPassword.value;
+    let registered = false;
+    const submit = path => api(path, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email, password })
+    }, 'auth');
+    showAuthMessage(authMode === 'register' ? 'Creating your account…' : 'Logging in…');
+    try {
+        if (authMode === 'register') {
+            await submit('/register');
+            registered = true;
+        }
+        await submit('/login');
+        authPassword.value = '';
+        window.location.reload();
+    } catch (error) {
+        if (registered) setAuthMode('login');
+        showAuthMessage(registered ? `Your account was created. Log in to continue. ${error.message}` : error.message, true);
+        authPassword.value = '';
+    } finally {
+        authBusy = false;
+        authForm.removeAttribute('aria-busy');
+        authForm.querySelectorAll('input, button').forEach(control => { control.disabled = false; });
+    }
+});
+
+logoutButton.addEventListener('click', async () => {
+    if (logoutButton.disabled) return;
+    authBusy = true;
+    updateRefresh();
+    try {
+        await api('/logout', { method: 'POST' }, 'auth');
+        showSignedOut();
+        window.location.reload();
+    } catch (error) {
+        if (error.status === 401) {
+            showSignedOut('Your session has ended. Log in to continue.');
+        } else {
+            showFeedback(`Could not log out. ${error.message}`, true);
+        }
+    } finally {
+        authBusy = false;
+        updateRefresh();
+    }
+});
+
+restoreSession();
