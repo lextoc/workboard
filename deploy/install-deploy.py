@@ -26,8 +26,10 @@ for name, target, mode in [
     ('workboard-deploy', '/usr/local/sbin/workboard-deploy', 0o755),
     ('workboard-deploy-ssh', '/usr/local/bin/workboard-deploy-ssh', 0o755),
     ('workboard-deploy.sudoers', '/etc/sudoers.d/workboard-deploy', 0o440),
+    ('smoke-test.py', '/usr/local/libexec/workboard-smoke', 0o755),
 ]:
     path = Path(target)
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(base64.b64decode(payload['files'][name]))
     os.chown(path, 0, 0)
     path.chmod(mode)
@@ -37,10 +39,5 @@ config = Path('/etc/workboard/deploy-smoke.json')
 config.touch(mode=0o600, exist_ok=True)
 config.chmod(0o600)
 config.write_text(json.dumps(credentials) + '\n')
-hash_result = subprocess.run(['/usr/bin/openssl', 'passwd', '-6', '-stdin'], input=(credentials['password'] + '\n').encode(), capture_output=True, check=True)
-htpasswd = Path('/etc/workboard/htpasswd')
-lines = [line for line in htpasswd.read_text().splitlines() if not line.startswith(credentials['username'] + ':')]
-lines.append(credentials['username'] + ':' + hash_result.stdout.decode().strip())
-htpasswd.write_text('\n'.join(lines) + '\n')
 subprocess.run(['/usr/sbin/nginx', '-t'], check=True)
 print('Restricted deployment entry point installed')

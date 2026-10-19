@@ -1,5 +1,4 @@
 #!/usr/bin/python3 -I
-import base64
 import fcntl
 import hashlib
 import json
@@ -76,13 +75,9 @@ def switch(release):
     os.replace(temporary, ROOT / "current")
 
 
-def request(url, credentials=None):
-    headers = {}
-    if credentials:
-        token = base64.b64encode(f"{credentials['username']}:{credentials['password']}".encode()).decode()
-        headers["Authorization"] = "Basic " + token
+def request(url):
     try:
-        with urllib.request.urlopen(urllib.request.Request(url, headers=headers), timeout=5) as response:
+        with urllib.request.urlopen(url, timeout=5) as response:
             return response.status, response.read()
     except urllib.error.HTTPError as error:
         return error.code, error.read()
@@ -93,8 +88,8 @@ def verify(require_health=True):
     while time.monotonic() < deadline:
         try:
             active = subprocess.run(["/usr/bin/systemctl", "is-active", "--quiet", "workboard.service"]).returncode == 0
-            status, body = request("http://127.0.0.1:18083/api/tickets")
-            if active and status == 200 and isinstance(json.loads(body), list):
+            status, _ = request("http://127.0.0.1:18083/api/tickets")
+            if active and status == 401:
                 if not require_health:
                     break
                 status, body = request("http://127.0.0.1:18083/q/health/ready")
@@ -105,11 +100,11 @@ def verify(require_health=True):
         time.sleep(2)
     else:
         raise RuntimeError("Backend did not become ready within 90 seconds")
-    credentials = json.loads(Path("/etc/workboard/deploy-smoke.json").read_text())
-    for path in ["/", "/app.js", "/styles.css", "/api/tickets"]:
-        url = "https://workboard.alexanderclaes.be" + path
-        if request(url)[0] != 401 or request(url, credentials)[0] != 200:
-            raise RuntimeError(f"Public authentication or proxy check failed for {path}")
+    subprocess.run([
+        "/usr/bin/python3", "-I", "/usr/local/libexec/workboard-smoke",
+        "https://workboard.alexanderclaes.be", "--check-auth", "--ensure-account",
+        "--credentials-file", "/etc/workboard/deploy-smoke.json",
+    ], check=True, timeout=120)
 
 
 def deploy(release_id, expected_hash):

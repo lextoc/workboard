@@ -154,5 +154,20 @@ class DeploymentTests(unittest.TestCase):
             commands.assert_not_called()
 
 
+class VerificationTests(unittest.TestCase):
+    def test_waits_for_protected_api_and_local_health_then_runs_session_smoke(self):
+        def request(url):
+            if url.endswith("/api/tickets"):
+                return 401, b""
+            return 200, b'{"status":"UP"}'
+        with patch.object(deployment, "request", side_effect=request), \
+                patch.object(deployment.subprocess, "run", return_value=subprocess.CompletedProcess([], 0)) as run:
+            deployment.verify()
+            command = run.call_args.args[0]
+            self.assertIn("--check-auth", command)
+            self.assertIn("--ensure-account", command)
+            self.assertIn("/etc/workboard/deploy-smoke.json", command)
+
+
 if __name__ == "__main__":
     unittest.main()

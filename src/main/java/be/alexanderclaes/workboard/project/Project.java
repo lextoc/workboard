@@ -1,7 +1,9 @@
 package be.alexanderclaes.workboard.project;
 
+import be.alexanderclaes.workboard.auth.AppUser;
 import jakarta.persistence.*;
 
+import java.util.Objects;
 import java.util.UUID;
 
 @Entity
@@ -31,5 +33,17 @@ public class Project {
         }
 
         this.name = name;
+    }
+
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id", nullable = false, updatable = false)
+    private AppUser owner;
+
+    public void assignOwner(AppUser owner) {
+        if (this.owner != null) {
+            throw new IllegalStateException("Owner is already assigned.");
+        }
+
+        this.owner = Objects.requireNonNull(owner);
     }
 }

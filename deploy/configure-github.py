@@ -28,7 +28,7 @@ def configure():
         temporary = Path(temporary)
         private_key = temporary / 'id_ed25519'
         run(['ssh-keygen', '-q', '-t', 'ed25519', '-N', '', '-C', 'github-actions-workboard-production', '-f', str(private_key)])
-        credentials = {'username': 'workboard-ci', 'password': secrets.token_urlsafe(36)}
+        credentials = {'email': f'workboard-ci-{secrets.token_hex(6)}@example.com', 'password': secrets.token_urlsafe(36)}
         host_key = run(SSH + ['cat /etc/ssh/ssh_host_ed25519_key.pub']).decode().split()
         known_hosts = 'alexanderclaes.be ' + ' '.join(host_key[:2]) + '\n'
         (temporary / 'known_hosts').write_text(known_hosts)
@@ -43,7 +43,7 @@ def configure():
         for name, value in {
             'DEPLOY_SSH_KEY': private_key.read_bytes(),
             'DEPLOY_KNOWN_HOSTS': known_hosts.encode(),
-            'SMOKE_USERNAME': credentials['username'].encode(),
+            'SMOKE_EMAIL': credentials['email'].encode(),
             'SMOKE_PASSWORD': credentials['password'].encode(),
         }.items():
             run(['gh', 'secret', 'set', name, '--env', 'production', '--repo', REPO], value)
@@ -51,7 +51,7 @@ def configure():
         payload = {
             'public_key': private_key.with_suffix('.pub').read_text(),
             'credentials': credentials,
-            'files': {name: base64.b64encode((ROOT / 'deploy' / name).read_bytes()).decode() for name in ['workboard-deploy', 'workboard-deploy-ssh', 'workboard-deploy.sudoers']},
+            'files': {name: base64.b64encode((ROOT / 'deploy' / name).read_bytes()).decode() for name in ['workboard-deploy', 'workboard-deploy-ssh', 'workboard-deploy.sudoers', 'smoke-test.py']},
         }
         output = run(SSH + ['python3 -c ' + shlex.quote(remote_install)], json.dumps(payload).encode())
         print(output.decode().strip(), flush=True)

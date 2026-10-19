@@ -200,3 +200,19 @@ mark { background: #fff1a8; color: inherit; border-radius: 2px; padding: 0; }
 @media (prefers-reduced-motion: reduce) {
     *, *::before, *::after { transition: none !important; scroll-behavior: auto !important; }
 }
+
+.auth-panel { width: 100%; max-width: 380px; margin: 64px auto; }
+.auth-panel h1 { margin: 0 0 8px; font-size: 26px; letter-spacing: -.6px; }
+.auth-panel > .hint { margin: 0 0 24px; }
+.auth-panel form { display: grid; gap: 12px; }
+.auth-panel label { margin: 8px 0 -4px; }
+.auth-panel form .hint { margin: 0; }
+#auth-feedback { font-size: 13px; white-space: pre-line; overflow-wrap: anywhere; }
+#auth-feedback:empty { display: none; }
+#auth-submit { margin-top: 12px; }
+.account-email { max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--muted); font-size: 12px; }
+@media (max-width: 600px) {
+    .auth-panel { margin: 40px auto; }
+    .header-actions { gap: 2px; }
+    .account-email { display: none; }
+}

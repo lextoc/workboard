@@ -1,5 +1,6 @@
 package be.alexanderclaes.workboard.ticket;
 
+import be.alexanderclaes.workboard.auth.AppUser;
 import be.alexanderclaes.workboard.project.Project;
 import jakarta.persistence.*;
 
@@ -73,6 +74,18 @@ public class Ticket {
 
     public void setProject(Project project) {
         this.project = project;
+    }
+
+    @ManyToOne(optional = false, fetch = FetchType.LAZY)
+    @JoinColumn(name = "owner_id", nullable = false, updatable = false)
+    private AppUser owner;
+
+    public void assignOwner(AppUser owner) {
+        if (this.owner != null) {
+            throw new IllegalStateException("Owner is already assigned.");
+        }
+
+        this.owner = Objects.requireNonNull(owner);
     }
 
     public void changeState(

@@ -5,17 +5,34 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Workboard</title>
+    <link rel="icon" type="image/svg+xml" href="favicon.svg">
     <link rel="stylesheet" href="styles.css">
     <script src="picker.js" defer></script>
     <script src="app.js" defer></script>
 </head>
 <body>
-<a class="skip-link" href="#board">Skip to board</a>
+<a class="skip-link" href="#board" hidden>Skip to board</a>
 <main>
     <header>
         <a class="brand" href="./" aria-label="Workboard home">Workboard</a>
-        <div class="header-actions"><button id="manage-projects" type="button" class="quiet">Projects</button><button id="refresh" type="button" class="quiet icon-button" aria-label="Refresh board" title="Refresh board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 18 17"/></svg></button></div>
+        <div class="header-actions" hidden><span id="account-email" class="account-email"></span><button id="logout" type="button" class="quiet">Log out</button><button id="manage-projects" type="button" class="quiet">Projects</button><button id="refresh" type="button" class="quiet icon-button" aria-label="Refresh board" title="Refresh board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 7v5h-5M4 17v-5h5M6.1 7a7 7 0 0 1 11.6-1L20 9M4 15l2.3 3A7 7 0 0 0 18 17"/></svg></button></div>
     </header>
+    <section id="auth-panel" class="auth-panel" aria-labelledby="auth-title">
+        <h1 id="auth-title">Log in to Workboard</h1>
+        <p id="auth-description" class="hint">Your tickets and projects, in one place.</p>
+        <p id="auth-feedback" role="status" aria-live="polite">Checking your session…</p>
+        <button id="retry-session" type="button" class="secondary" hidden>Try again</button>
+        <form id="auth-form" hidden>
+            <label for="auth-email">Email</label>
+            <input id="auth-email" name="email" type="email" autocomplete="username" maxlength="254" required>
+            <label for="auth-password">Password</label>
+            <input id="auth-password" name="password" type="password" autocomplete="current-password" maxlength="128" required aria-describedby="auth-password-help">
+            <p id="auth-password-help" class="hint" hidden>Use 15–128 characters. Email verification is not required.</p>
+            <button id="auth-submit" type="submit">Log in</button>
+            <button id="auth-switch" type="button" class="quiet">Create an account</button>
+        </form>
+    </section>
+    <div id="workspace" hidden>
     <h1 class="sr-only">Tickets</h1>
     <p id="feedback" role="status" aria-live="polite">Loading tickets…</p>
     <section class="project-toolbar" aria-label="Project workspace">
@@ -77,6 +94,7 @@
         </section>
     </div>
     <details class="board-help"><summary>Shortcuts</summary><p>Click a ticket to edit. Enter adds a line; Ctrl/⌘ + Enter saves; Escape cancels. Use the arrow buttons on each ticket to move it between columns. Open ⋯ for project assignment, blocking and deletion. Press / outside a text field to search.</p><p>Done shows tickets completed within the last day. Refresh loads the latest server state.</p></details>
+    </div>
 </main>
 <dialog id="project-dialog" aria-labelledby="project-dialog-title">
     <div class="dialog-heading">

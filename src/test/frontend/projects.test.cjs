@@ -60,6 +60,10 @@ async function workspace(t, options = {}) {
             { id: unassignedId, title: 'Unassigned task', status: 'DOING', blocked: false, blockedNote: null, completedAt: null, projectId: null }
         ],
         writes: [],
+        authWrites: [],
+        requests: [],
+        authenticated: true,
+        user: { id: 'user-1', email: 'alex@example.com' },
         ...options.state
     };
     const ticketResponse = ticket => ({
@@ -71,8 +75,37 @@ async function workspace(t, options = {}) {
         const [, , resource, id] = new URL(request.url()).pathname.split('/');
         const method = request.method();
         const data = request.postDataJSON();
-        if (method !== 'GET') state.writes.push({ resource, id, method, data });
+        state.requests.push({ resource, id, method, headers: request.headers() });
+        if (method !== 'GET' && resource !== 'auth') {
+            assert.equal(request.headers()['x-workboard-request'], '1');
+            state.writes.push({ resource, id, method, data });
+        }
         const reply = (body, status = 200) => route.fulfill({ status, json: body });
+        if (resource === 'auth') {
+            if (method !== 'GET') {
+                assert.equal(request.headers()['x-workboard-request'], '1');
+                state.authWrites.push({ id, method, data, headers: request.headers() });
+            }
+            if (id === 'me') {
+                if (state.sessionUnavailable) return reply({ message: 'Session service unavailable.' }, 503);
+                return state.authenticated ? reply(state.user) : reply({ message: 'Authentication required.' }, 401);
+            }
+            if (id === 'register') {
+                if (state.registrationFailure) return reply({ message: state.registrationFailure }, 409);
+                return reply(state.user, 201);
+            }
+            if (id === 'login') {
+                if (state.loginFailure) return reply({ message: state.loginFailure }, 401);
+                state.authenticated = true;
+                return reply(state.user);
+            }
+            if (id === 'logout') {
+                if (state.logoutFailure) return reply({ message: 'Logout unavailable.' }, 503);
+                state.authenticated = false;
+                return route.fulfill({ status: 204 });
+            }
+        }
+        if (!state.authenticated) return route.fulfill({ status: 401 });
         if (resource === 'projects') {
             if (options.projectsUnavailable || state.projectsUnavailable) return reply({ message: 'Not found' }, 404);
             if (method === 'GET') return reply(state.projects);
@@ -131,7 +164,13 @@ async function workspace(t, options = {}) {
         return reply({ message: 'Unexpected request' }, 500);
     });
     await page.goto(origin);
-    await expect(page.locator('#feedback')).toHaveText('Tickets refreshed.');
+    if (state.sessionUnavailable) {
+        await expect(page.locator('#retry-session')).toBeVisible();
+    } else if (state.authenticated) {
+        await expect(page.locator('#feedback')).toHaveText('Tickets refreshed.');
+    } else {
+        await expect(page.locator('#auth-form')).toBeVisible();
+    }
     t.after(() => assert.deepEqual(errors, []));
     return { page, state };
 }
@@ -554,7 +593,7 @@ test('remembers dropdown selections independently across reloads and resets them
 test('drops deleted project preferences and keeps ticket assignments authoritative', async t => {
     const { page, state } = await workspace(t);
     await page.evaluate(({ project, other, ticket }) => {
-        localStorage.setItem('workboard.dropdowns.v1', JSON.stringify({
+        localStorage.setItem('workboard.dropdowns.v1.user-1', JSON.stringify({
             filter: other, managed: other,
             create: { TODO: other, DOING: project, DONE: '' },
             tickets: { [ticket]: other }
@@ -568,7 +607,7 @@ test('drops deleted project preferences and keeps ticket assignments authoritati
     await expect(page.locator('[data-status="TODO"] .create-project')).toHaveJSProperty('value', '');
     await expect(page.locator('[data-status="DOING"] .create-project')).toHaveJSProperty('value', projectId);
     await expect(page.locator(`[data-ticket-id="${assignedId}"] .ticket-project-select`)).toHaveJSProperty('value', projectId);
-    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('workboard.dropdowns.v1')));
+    const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('workboard.dropdowns.v1.user-1')));
     assert.equal(stored.filter, 'all');
     assert.equal(stored.managed, '');
     assert.equal(stored.create.TODO, '');
@@ -578,11 +617,11 @@ test('preserves dropdown preferences through a temporary project catalog failure
     const { page, state } = await workspace(t);
     await choose(page.locator('#project-filter'), otherProjectId);
     await choose(page.locator('[data-status="DOING"] .create-project'), projectId);
-    const before = await page.evaluate(() => localStorage.getItem('workboard.dropdowns.v1'));
+    const before = await page.evaluate(() => localStorage.getItem('workboard.dropdowns.v1.user-1'));
     state.projectsUnavailable = true;
     await page.reload();
     await expect(page.locator('#project-notice')).toBeVisible();
-    assert.equal(await page.evaluate(() => localStorage.getItem('workboard.dropdowns.v1')), before);
+    assert.equal(await page.evaluate(() => localStorage.getItem('workboard.dropdowns.v1.user-1')), before);
     state.projectsUnavailable = false;
     await page.locator('#refresh').click();
     await expect(page.locator('#refresh')).toBeEnabled();
@@ -592,7 +631,7 @@ test('preserves dropdown preferences through a temporary project catalog failure
 
 test('recovers from malformed dropdown preferences and works when storage is blocked', async t => {
     const { page } = await workspace(t);
-    await page.evaluate(() => localStorage.setItem('workboard.dropdowns.v1', '{invalid'));
+    await page.evaluate(() => localStorage.setItem('workboard.dropdowns.v1.user-1', '{invalid'));
     await page.reload();
     await expect(page.locator('#refresh')).toBeEnabled();
     await choose(page.locator('#project-filter'), projectId);
@@ -604,4 +643,135 @@ test('recovers from malformed dropdown preferences and works when storage is blo
     await expect(unavailable.page.locator('.ticket:visible')).toHaveCount(1);
     await choose(unavailable.page.locator('[data-status="TODO"] .create-project'), otherProjectId);
     await expect(unavailable.page.locator('[data-status="TODO"] .create-project')).toHaveJSProperty('value', otherProjectId);
+});
+
+
+test('checks the session before loading private resources and logs in with CSRF headers', async t => {
+    const { page, state } = await workspace(t, { state: { authenticated: false } });
+    await expect(page.locator('#workspace')).toBeHidden();
+    await expect(page.locator('.header-actions')).toBeHidden();
+    assert.deepEqual(state.requests.map(request => request.resource), ['auth']);
+    await page.locator('#auth-email').fill('alex@example.com');
+    await page.locator('#auth-password').fill('my example password');
+    await page.locator('#auth-submit').click();
+    await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.locator('#feedback')).toHaveText('Tickets refreshed.');
+    await expect(page.locator('#account-email')).toHaveText('alex@example.com');
+    assert.equal(state.authWrites[0].id, 'login');
+    assert.equal(state.authWrites[0].headers.origin, origin);
+    assert.equal(await page.evaluate(() => Object.keys(localStorage).some(key => /token|session|password/i.test(key))), false);
+});
+
+test('registers then logs in and applies registration password requirements', async t => {
+    const { page, state } = await workspace(t, { state: { authenticated: false } });
+    await page.locator('#auth-switch').click();
+    await expect(page.locator('#auth-title')).toHaveText('Create your account');
+    await expect(page.locator('#auth-password')).toHaveAttribute('autocomplete', 'new-password');
+    await page.locator('#auth-email').fill('new@example.com');
+    await page.locator('#auth-password').fill('short');
+    await page.locator('#auth-submit').click();
+    assert.equal(state.authWrites.length, 0);
+    await page.locator('#auth-password').fill('my new example password');
+    await page.locator('#auth-submit').click();
+    await expect(page.locator('#workspace')).toBeVisible();
+    assert.deepEqual(state.authWrites.map(write => write.id), ['register', 'login']);
+});
+
+test('keeps failed login and duplicate registration on the authentication form', async t => {
+    const { page, state } = await workspace(t, { state: { authenticated: false, loginFailure: 'Invalid email or password.' } });
+    await page.locator('#auth-email').fill('alex@example.com');
+    await page.locator('#auth-password').fill('incorrect password');
+    await page.locator('#auth-submit').click();
+    await expect(page.locator('#auth-feedback')).toContainText('Invalid email or password.');
+    await expect(page.locator('#workspace')).toBeHidden();
+    await expect(page.locator('#auth-password')).toHaveValue('');
+    await expect(page.locator('#auth-submit')).toBeEnabled();
+    await page.locator('#auth-switch').click();
+    state.registrationFailure = 'Email is already registered.';
+    await page.locator('#auth-password').fill('my example password');
+    await page.locator('#auth-submit').click();
+    await expect(page.locator('#auth-feedback')).toContainText('Email is already registered.');
+    assert.deepEqual(state.authWrites.map(write => write.id), ['login', 'register']);
+});
+
+test('does not repeat registration when the subsequent login fails', async t => {
+    const { page, state } = await workspace(t, { state: { authenticated: false, loginFailure: 'Login temporarily unavailable.' } });
+    await page.locator('#auth-switch').click();
+    await page.locator('#auth-email').fill('new@example.com');
+    await page.locator('#auth-password').fill('my example password');
+    await page.locator('#auth-submit').click();
+    await expect(page.locator('#auth-feedback')).toContainText('Your account was created. Log in to continue.');
+    await expect(page.locator('#auth-submit')).toHaveText('Log in');
+    state.loginFailure = null;
+    await page.locator('#auth-password').fill('my example password');
+    await page.locator('#auth-submit').click();
+    await expect(page.locator('#workspace')).toBeVisible();
+    assert.deepEqual(state.authWrites.map(write => write.id), ['register', 'login', 'login']);
+});
+
+test('clears private data and closes dialogs when a board request returns 401', async t => {
+    const { page, state } = await workspace(t);
+    await page.locator('#manage-projects').click();
+    await expect(page.locator('#project-dialog')).toBeVisible();
+    state.authenticated = false;
+    await page.locator('#project-name').fill('Expired session');
+    await page.locator('#save-project').click();
+    await expect(page.locator('#auth-feedback')).toHaveText('Your session has expired. Log in again to continue.');
+    await expect(page.locator('#workspace')).toBeHidden();
+    await expect(page.locator('#project-dialog')).not.toBeVisible();
+    await expect(page.locator('.ticket')).toHaveCount(0);
+    await expect(page.locator('#account-email')).toHaveText('');
+    await expect(page.locator('#auth-email')).toBeFocused();
+});
+
+test('logs out and preserves the board when logout fails', async t => {
+    const { page, state } = await workspace(t, { state: { logoutFailure: true } });
+    await page.locator('#logout').click();
+    await expect(page.locator('#feedback')).toContainText('Could not log out.');
+    await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.locator('#logout')).toBeEnabled();
+    state.logoutFailure = false;
+    await page.locator('#logout').click();
+    await expect(page.locator('#auth-form')).toBeVisible();
+    await expect(page.locator('#workspace')).toBeHidden();
+    assert.equal(state.authenticated, false);
+    assert.equal(state.authWrites.at(-1).id, 'logout');
+});
+
+test('retries session restoration without exposing the board on server failure', async t => {
+    const { page, state } = await workspace(t, { state: { sessionUnavailable: true } });
+    await expect(page.locator('#workspace')).toBeHidden();
+    await expect(page.locator('#auth-form')).toBeHidden();
+    assert.equal(state.requests.some(request => request.resource !== 'auth'), false);
+    state.sessionUnavailable = false;
+    await page.locator('#retry-session').click();
+    await expect(page.locator('#workspace')).toBeVisible();
+    await expect(page.locator('#feedback')).toHaveText('Tickets refreshed.');
+});
+
+test('keeps saved dropdown choices separate between accounts', async t => {
+    const { page, state } = await workspace(t);
+    await choose(page.locator('#project-filter'), projectId);
+    state.user = { id: 'user-2', email: 'other@example.com' };
+    await page.reload();
+    await expect(page.locator('#feedback')).toHaveText('Tickets refreshed.');
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', 'all');
+    state.user = { id: 'user-1', email: 'alex@example.com' };
+    await page.reload();
+    await expect(page.locator('#feedback')).toHaveText('Tickets refreshed.');
+    await expect(page.locator('#project-filter')).toHaveJSProperty('value', projectId);
+});
+
+test('authentication forms fit a narrow screen and ignore board keyboard shortcuts', async t => {
+    const { page } = await workspace(t, {
+        context: { viewport: { width: 320, height: 740 } },
+        state: { authenticated: false }
+    });
+    await page.locator('#auth-email').focus();
+    await page.keyboard.press('Control+k');
+    await expect(page.locator('#auth-email')).toBeFocused();
+    assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
+    await capture(page, 'auth-mobile-login');
+    await page.locator('#auth-switch').click();
+    await capture(page, 'auth-mobile-register');
 });
