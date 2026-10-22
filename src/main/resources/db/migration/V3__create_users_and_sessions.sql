@@ -28,11 +28,11 @@ CREATE INDEX user_session_expiry_idx
     ON user_session (expires_at);
 
 ALTER TABLE ticket
-    ADD COLUMN owner_id UUID NOT NULL
+    ADD COLUMN owner_id UUID
         REFERENCES app_user (id);
 
 ALTER TABLE project
-    ADD COLUMN owner_id UUID NOT NULL
+    ADD COLUMN owner_id UUID
         REFERENCES app_user (id);
 
 CREATE INDEX ticket_owner_idx ON ticket (owner_id);
