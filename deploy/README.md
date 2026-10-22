@@ -78,11 +78,16 @@ For local HTTP with a production-profile package, explicitly set `APP_AUTH_COOKI
 
 ## One-time user-auth cutover
 
-This repository change does not reset or deploy production. Before activating it:
+For future installations or a populated pre-auth database, use this sequence:
 
 1. Verify the new artifact and tests. Install the updated root-owned deployment helpers and smoke executable, and provision the new `SMOKE_EMAIL`/`SMOKE_PASSWORD` environment secrets plus matching root-only `{email,password}` credentials file. The updated configurator performs this administrative setup but also rotates the deployment key; review its full effects first. Old `SMOKE_USERNAME`/nginx credentials cannot authenticate to the application.
-2. In the maintenance window, stop the old application and take a database backup. Recreate the dedicated database with the existing database role as owner, preserving the configured JDBC URL and credentials. V3 intentionally assumes empty ticket/project tables. Keep the old application stopped so it cannot recreate/populate the database before the new release.
+2. In the maintenance window, stop the old application and take a database backup. Preserve the database. V3 adds nullable ownership; V4 assigns existing rows and then makes ownership mandatory. Provide `WORKBOARD_LEGACY_OWNER_EMAIL` and, for a new owner account, `WORKBOARD_LEGACY_OWNER_PASSWORD_HASH` through a root-only one-time environment file loaded by systemd. Use an Argon2id hash generated with the application hasher; never commit plaintext passwords or credential hashes. Fresh databases need neither value. Existing accounts are reused without changing their passwords.
 3. Install `workboard.nginx.conf` in the existing nginx site (included from the `http` context), run `nginx -t`, and reload nginx as part of the cutover. This removes the Basic gate, opens the login/signup page, denies public `/q/`, and applies per-IP login/signup limits. Do not expose the old unauthenticated backend by removing the gate early.
-4. Deploy the verified new artifact. Its first startup applies V1/V2/V3; the updated root verifier bootstraps its dedicated application account and verifies session authentication over HTTPS. Confirm signup/login and a private board before ending maintenance.
+4. Deploy the verified new artifact. Its first startup applies pending V1/V2/V3/V4 migrations; the updated root verifier bootstraps its dedicated application account and verifies session authentication over HTTPS. Compare the original board with a pre-migration snapshot, confirm ownership and login, remove the one-time bootstrap environment, and verify a restart before ending maintenance.
 
-The automatic workflow does not install helpers/nginx or reset databases. The new verifier expects the new session-based application; do not mix it with the old release's Basic-auth smoke assumptions. Migration-changing releases still disable automatic rollback. No production cutover has been performed by this task.
+The automatic workflow does not install helpers/nginx or reset databases. The new verifier expects the new session-based application; do not mix it with the old release's Basic-auth smoke assumptions. Migration-changing releases still disable automatic rollback. The recovery migration history is recorded below.
+
+
+## Recovery migration history
+
+The corrected V3 and V4 are tracked together to keep future pipeline deployments consistent with the recovery build. V3 was corrected only after confirming that its failed execution had rolled back. Do not restore the old V3 or use Flyway repair to bypass a checksum mismatch on a successfully applied migration.
