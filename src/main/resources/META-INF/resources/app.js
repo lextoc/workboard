@@ -581,7 +581,7 @@ function ticketCard(ticket) {
     const card = element('article', `ticket${ticket.blocked ? ' blocked' : ''}`);
     card.dataset.ticketId = id;
     card.addEventListener('click', event => {
-        if (event.target.closest('.ticket-menu, .inline-editor, .ticket-moves')) return;
+        if (event.target.closest('.ticket-menu, .inline-editor, .ticket-moves, .blocker-summary')) return;
         if (editingTickets.has(id)) {
             card.querySelector('textarea[name="title"]')?.focus();
             return;
@@ -704,7 +704,8 @@ function ticketCard(ticket) {
         note.addEventListener('click', () => openInlineEditor(id, 'blocker'));
         const unblock = button('Unblock', 'quiet unblock-action');
         unblock.addEventListener('click', () => runCard(id, () => saveTicket(id, { blocked: false, blockedNote: null }), '.ticket-menu-trigger'));
-        panel.append(note, unblock);
+        blocker.append(note);
+        panel.append(unblock);
     } else {
         const block = actionButton('Block ticket', 'block', 'quiet block-action', `Block ticket ${id}`);
         block.addEventListener('click', () => openInlineEditor(id, 'blocker'));
