@@ -102,7 +102,7 @@ def verify(require_health=True):
         raise RuntimeError("Backend did not become ready within 90 seconds")
     subprocess.run([
         "/usr/bin/python3", "-I", "/usr/local/libexec/workboard-smoke",
-        "https://workboard.alexanderclaes.be", "--check-auth", "--ensure-account",
+        "https://workboard.alexanderclaes.com", "--check-auth", "--ensure-account",
         "--credentials-file", "/etc/workboard/deploy-smoke.json",
     ], check=True, timeout=120)
 
